@@ -1,0 +1,13 @@
+# instalar dependencias y validar build
+npm ci
+npm run lint
+npm run build
+
+# crear rama, añadir cambios, commitear y subir (recomendado)
+git checkout -b fix/toast-client
+git add -A
+git commit -m "fix(toast): mover CSS de react-toastify a ToastProvider (Client) y añadir util showToast"
+git push -u origin fix/toast-client
+
+# (opcional) crear PR desde la CLI si usas GitHub CLI
+gh pr create --fill
