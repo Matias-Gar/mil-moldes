@@ -184,7 +184,7 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
 
     try {
       const branding = await getReceiptBranding();
-      const PAPER_WIDTH = 58; // ancho ajustado para impresora de 58mm
+      const PAPER_WIDTH = 80; // ancho original para impresora de 80mm
       const MARGIN = 2;
       const CONTENT_WIDTH = PAPER_WIDTH - MARGIN * 2;
 
