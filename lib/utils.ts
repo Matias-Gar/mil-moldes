@@ -54,7 +54,10 @@ export async function sincronizarStockProducto(
 export function validarProducto({ nombre, descripcion, variantes, imagenes }: ProductoInput): string[] {
   const errores: string[] = [];
   if (!nombre || nombre.trim().length < 2) errores.push("El nombre es obligatorio.");
-  if (!descripcion || descripcion.trim().length < 5) errores.push("La descripción es obligatoria.");
+  // Permitir guardar si ya existe una descripción, aunque tenga menos de 5 caracteres
+  if (!descripcion || (descripcion.trim().length < 5 && descripcion.trim().length !== 0)) {
+    errores.push("La descripción es obligatoria (mínimo 5 caracteres). Si ya existe una descripción previa, puedes guardar.");
+  }
   if (!imagenes || imagenes.length === 0) errores.push("Debes subir al menos una imagen.");
   if (!variantes || variantes.length === 0) errores.push("Debes definir al menos una variante.");
   const colores = new Set<string>();

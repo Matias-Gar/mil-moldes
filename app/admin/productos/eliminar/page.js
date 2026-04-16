@@ -6,6 +6,7 @@ import { Button } from "../../../../components/ui/button";
 
 
 import { registrarMovimientoStock } from "../../../../lib/stockMovimientos";
+import { showToast } from "../../../../components/ui/Toast";
 import { registrarHistorialProducto } from "../../../../lib/productosHistorial";
 import { getOptimizedImageUrl, buildImageSrcSet } from "../../../../lib/imageOptimization";
 
@@ -50,6 +51,7 @@ function EliminarProductos(props) {
   const eliminarProducto = async (user_id) => {
     if (!window.confirm("¿Seguro que deseas eliminar este producto?")) return;
     setEliminando(user_id);
+    let errorOcurrido = false;
     // Registrar movimiento e historial de eliminación
     try {
       const user = (await supabase.auth.getUser())?.data?.user;
@@ -63,29 +65,63 @@ function EliminarProductos(props) {
         usuario_email: user?.email || '',
         observaciones: 'Eliminación de producto desde panel'
       };
-      console.log('registrarMovimientoStock payload (eliminar):', movimientoPayload);
-      await registrarMovimientoStock(movimientoPayload);
-      await registrarHistorialProducto({
+      const { error: movError } = await registrarMovimientoStock(movimientoPayload);
+      if (movError) {
+        showToast("Error registrando movimiento de stock: " + movError.message, "error");
+        errorOcurrido = true;
+      }
+      const { error: histError } = await registrarHistorialProducto({
         producto_id: Number(user_id),
         accion: "DELETE",
         datos_anteriores: prodData,
         datos_nuevos: null,
         usuario_email: user?.email || null
       });
+      if (histError) {
+        showToast("Error registrando historial: " + histError.message, "error");
+        errorOcurrido = true;
+      }
     } catch (err) {
-      console.warn('No se pudo registrar movimiento/historial de eliminación:', err);
+      showToast('No se pudo registrar movimiento/historial de eliminación: ' + (err?.message || err), "error");
+      errorOcurrido = true;
     }
     // Eliminar primero dependencias para evitar errores 409
-    await supabase.from("stock_movimientos").delete().eq("producto_id", user_id);
-    await supabase.from("productos_historial").delete().eq("producto_id", user_id);
-    await supabase.from("producto_variantes").delete().eq("producto_id", user_id);
-    await supabase.from("producto_imagenes").delete().eq("producto_id", user_id);
-    await supabase.from("promociones").delete().eq("producto_id", user_id);
-    await supabase.from("pack_productos").delete().eq("producto_id", user_id);
-    await supabase.from("ventas_detalle").delete().eq("producto_id", user_id);
+    const dependencias = [
+      "stock_movimientos",
+      "productos_historial",
+      "producto_imagenes",
+      "promociones",
+      "pack_productos",
+      "ventas_detalle"
+    ];
+    const userIdBigInt = Number(user_id);
+    console.log("user_id recibido para eliminar:", user_id, typeof user_id, "userIdBigInt:", userIdBigInt, typeof userIdBigInt);
+    const { data: variantesAntes } = await supabase.from("producto_variantes").select("*").eq("producto_id", userIdBigInt);
+    console.log("Variantes antes de borrar:", variantesAntes);
+    // Eliminar variantes primero y mostrar error específico si ocurre
+    const { error: variantesError, data: variantesBorradas } = await supabase.from("producto_variantes").delete().eq("producto_id", userIdBigInt);
+    console.log("Variantes borradas:", variantesBorradas, "Error:", variantesError);
+    if (variantesError) {
+      showToast(`Error eliminando variantes: ${variantesError.message}`, "error");
+      errorOcurrido = true;
+    }
+    for (const tabla of dependencias) {
+      const { error } = await supabase.from(tabla).delete().eq("producto_id", user_id);
+      if (error) {
+        showToast(`Error eliminando en ${tabla}: ${error.message}`, "error");
+        errorOcurrido = true;
+      }
+    }
     // Finalmente, eliminar el producto
-    await supabase.from("productos").delete().eq("user_id", user_id);
+    const { error: prodError } = await supabase.from("productos").delete().eq("user_id", user_id);
+    if (prodError) {
+      showToast("Error eliminando producto: " + prodError.message, "error");
+      errorOcurrido = true;
+    }
     setEliminando(null);
+    if (!errorOcurrido) {
+      showToast("Producto eliminado correctamente.", "success");
+    }
   };
 
   // --- Filtros y ordenamiento ---

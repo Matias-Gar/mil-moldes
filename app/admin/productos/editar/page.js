@@ -298,27 +298,35 @@ export default function EditarCatalogo() {
       for (const v of nuevasVariantes) {
         if (v.id) {
           // Actualizar
-          await supabase.from("producto_variantes").update({
+          const { error: updateVarError } = await supabase.from("producto_variantes").update({
             color: v.color,
-            talla: v.talla,
             stock: parseInt(v.stock, 10) || 0,
             sku: v.sku,
             precio: parseDecimalInput(v.precio, null),
             imagen_url: v.imagen_url,
             activo: v.activo !== undefined ? v.activo : true,
           }).eq("id", v.id);
+          if (updateVarError) {
+            showToast("Error actualizando variante: " + updateVarError.message, "error");
+          }
         } else {
           // Insertar
-          await supabase.from("producto_variantes").insert({
+          if (!v.color || v.color.trim() === "") {
+            showToast("El color no puede estar vacío.", "error");
+            continue;
+          }
+          const { error: insertVarError } = await supabase.from("producto_variantes").insert({
             producto_id: productoActual.user_id,
             color: v.color,
-            talla: v.talla,
             stock: parseInt(v.stock, 10) || 0,
             sku: v.sku,
             precio: parseDecimalInput(v.precio, null),
             imagen_url: v.imagen_url,
             activo: v.activo !== undefined ? v.activo : true,
           });
+          if (insertVarError) {
+            showToast("Error insertando variante: " + insertVarError.message, "error");
+          }
         }
       }
 
@@ -344,6 +352,30 @@ export default function EditarCatalogo() {
       }
 
       showToast("Producto actualizado con éxito!");
+
+      // Refrescar variantes desde la base de datos para reflejar el cambio en la UI
+      const { data: variantesActualizadas, error: variantesRefreshError } = await supabase
+        .from("producto_variantes")
+        .select("*")
+        .eq("producto_id", productoActual.user_id);
+      if (!variantesRefreshError) {
+        setVariantes((prev) => ({
+          ...prev,
+          [productoActual.user_id]: variantesActualizadas || [],
+        }));
+        // Sincronizar todo el objeto editando con los datos reales de la BD
+        setEditando((prev) => ({
+          ...prev,
+          [productoActual.user_id]: {
+            ...prev[productoActual.user_id],
+            variantes: variantesActualizadas || [],
+            // Opcional: sincronizar otros campos si es necesario
+          },
+        }));
+        showToast("Color/variante agregado correctamente y sincronizado.", "success");
+      } else {
+        showToast("Producto actualizado, pero no se pudo refrescar variantes: " + variantesRefreshError.message, "warning");
+      }
 
       if (typeof window !== "undefined") {
         setTimeout(() => {
