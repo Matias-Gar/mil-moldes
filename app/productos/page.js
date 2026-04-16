@@ -4,7 +4,7 @@
 import React, { useState, useEffect } from "react";
 import Image from "next/image";
 import { usePromociones } from "@/lib/usePromociones";
-import { usePacks } from "@/lib/packs";
+import { usePacks, calcularDescuentoPack } from "@/lib/packs";
 import { supabase } from "@/lib/SupabaseClient";
 import { DEFAULT_STORE_SETTINGS, fetchStoreSettings } from "@/lib/storeSettings";
 import { PrecioConPromocion } from "@/lib/promociones";
