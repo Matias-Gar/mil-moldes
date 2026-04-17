@@ -498,55 +498,6 @@ export default function NuevaVenta() {
 
 
   // acciones de venta
-  const registrarIngresoEnCaja = useCallback(async (venta: VentaCajaPayload) => {
-    try {
-      const modo = String(venta?.modo_pago || "").toLowerCase();
-      const payment_method =
-        modo === "efectivo"
-          ? "cash"
-          : modo === "qr"
-            ? "qr"
-            : modo === "tarjeta"
-              ? "card"
-            : modo === "transferencia"
-              ? "transfer"
-              : "other";
-
-      const amount = Number(venta?.total || 0);
-      if (!Number.isFinite(amount) || amount <= 0) return;
-
-      const saleDate = String(venta?.fecha || "").slice(0, 10) || new Date().toISOString().slice(0, 10);
-
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token;
-      if (!token) return;
-
-      const response = await fetch('/api/cash/movements', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          date: saleDate,
-          type: 'income',
-          payment_method,
-          amount,
-          description: `Ingreso automatico por venta #${venta?.id}`,
-          cashbox_id: 'main',
-        }),
-      });
-
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || !payload?.success) {
-        throw new Error(payload?.error || 'No se pudo registrar el ingreso automatico en caja');
-      }
-    } catch (cashError) {
-      // No bloqueamos la venta por un error de sincronizacion de caja.
-      console.error('No se pudo registrar ingreso automatico en caja:', cashError);
-      showToast('La venta se guardo, pero no se pudo reflejar en flujo de caja automaticamente.', 'info');
-    }
-  }, []);
 
   const efectivizarVenta = useCallback(async () => {
       // ...existing code...
@@ -728,38 +679,7 @@ export default function NuevaVenta() {
       }
 
 
-      // Sincroniza automáticamente ingresos de ventas con flujo de caja, uno por cada método de pago
-      // Usa sessionData, token y saleDate ya definidos arriba
-      for (const pagoObj of pagos) {
-        if (!pagoObj.metodo || pagoObj.monto <= 0) continue;
-        let payment_method = 'other';
-        if (pagoObj.metodo === 'efectivo') payment_method = 'cash';
-        else if (pagoObj.metodo === 'qr') payment_method = 'qr';
-        else if (pagoObj.metodo === 'tarjeta') payment_method = 'other';
-        else if (pagoObj.metodo === 'transferencia') payment_method = 'transfer';
-        if (token) {
-          const response = await fetch('/api/cash/movements', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              date: saleDate.slice(0, 10),
-              type: 'income',
-              payment_method,
-              amount: pagoObj.monto,
-              description: `Ingreso por venta #${venta?.id} (${pagoObj.metodo})`,
-              cashbox_id: 'main',
-            }),
-          });
-          const payload = await response.json().catch(() => null);
-          if (!response.ok || !payload?.success) {
-            showToast(`Error al registrar en caja: ${payload?.error || 'Error desconocido'}`, 'error');
-            console.error('Error cash_movements:', payload?.error || response.statusText);
-          }
-        }
-      }
+      // ...eliminado: ya no se insertan ingresos automáticos de ventas en cash_movements...
 
       // snapshot ticket y imprimir
       const _ticket = {
