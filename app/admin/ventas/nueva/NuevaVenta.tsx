@@ -727,7 +727,7 @@ export default function NuevaVenta() {
       showToast('Error al crear venta: ' + errorMessage, 'error');
       setEfectivizando(false);
     }
-  }, [carrito, cliente, pagos, cambio, totalCobrar, subtotal, totalDescuento, packs, setCarrito, cambiarCampo, envio, comision, publicidad, rebajas, impuestosCalculados, cobrarImpuestos, registrarIngresoEnCaja]);
+  }, [carrito, cliente, pagos, cambio, totalCobrar, subtotal, totalDescuento, packs, setCarrito, cambiarCampo, envio, comision, publicidad, rebajas, impuestosCalculados, cobrarImpuestos]);
 
   // ...continued building UI mostly replicates previous layout using components
 
