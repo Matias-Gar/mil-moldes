@@ -95,10 +95,10 @@ export default function AumentarStockPage() {
       <html>
         <head>
           <style>
-            @page { size: 58mm 22mm; margin: 0; }
-            html, body { margin: 0; padding: 0; width: 58mm; height: 22mm; font-family: Arial, sans-serif; }
-            .label { width: 58mm; height: 22mm; box-sizing: border-box; border: 1px solid #000; display: flex; }
-            .left { width: 40mm; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+            @page { size: 70mm 22mm; margin: 0; }
+            html, body { margin: 0; padding: 0; width: 70mm; height: 22mm; font-family: Arial, sans-serif; }
+            .label { width: 70mm; height: 22mm; box-sizing: border-box; border: 1px solid #000; display: flex; }
+            .left { width: 48mm; display: flex; flex-direction: column; align-items: center; justify-content: center; }
             .left img { width: 100%; max-height: 12mm; object-fit: contain; }
             .code { font-size: 8pt; line-height: 1; }
             .right { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 8pt; padding: 1mm; }
@@ -336,7 +336,7 @@ export default function AumentarStockPage() {
       if (error) throw error;
 
       // Sincroniza el stock del producto como suma de variantes
-        const totalStock = await sincronizarStockProducto(pid, supabase);
+      await sincronizarStockProducto(pid, supabase);
 
       setProductos((prev) =>
         prev.map((p) => (p.user_id === pid ? { ...p, stock: newStock } : p))
@@ -366,7 +366,7 @@ export default function AumentarStockPage() {
           producto_id: pid,
           accion: "UPDATE",
           datos_anteriores: actual,
-           datos_nuevos: { ...actual, stock: totalStock },
+          datos_nuevos: { ...actual, stock: newStock },
           usuario_email: user?.email || null
         });
       } catch (err) {
@@ -417,7 +417,7 @@ export default function AumentarStockPage() {
 
 
       // Sincroniza el stock del producto como suma de variantes
-      const totalStock = await sincronizarStockProducto(pid, supabase);
+      await sincronizarStockProducto(pid, supabase);
 
       // Registrar movimiento e historial de aumento de stock para variante
       try {

@@ -637,7 +637,7 @@ export default function NuevaVenta() {
           usuario_email: userEmail,
           created_at: new Date().toISOString(),
         };
-        Object.keys(pagoVenta).forEach(k => {
+        (Object.keys(pagoVenta) as Array<keyof typeof pagoVenta>).forEach(k => {
           if (pagoVenta[k] === undefined) delete pagoVenta[k];
         });
         await ventasService.insertarVentaPago(pagoVenta);

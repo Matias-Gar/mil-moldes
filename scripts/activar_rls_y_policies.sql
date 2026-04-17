@@ -1,3 +1,10 @@
+-- Permitir que todos los usuarios autenticados agreguen clientes
+DROP POLICY IF EXISTS "Permitir agregar clientes a todos" ON public.clientes;
+CREATE POLICY "Permitir agregar clientes a todos"
+  ON public.clientes
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (true);
 -- Asegura que la función de creación de perfil inserte el email correctamente
 CREATE OR REPLACE FUNCTION public.crear_perfil_para_nuevo_usuario()
 RETURNS trigger
