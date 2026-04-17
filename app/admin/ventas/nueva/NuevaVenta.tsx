@@ -36,6 +36,7 @@ type VentaCajaPayload = {
   modo_pago?: string;
 };
 
+
 export default function NuevaVenta() {
   // hooks
   const { cliente, cambiarCampo, buscarPorCarnet, guardar, buscarEmailHistorico } = useCliente();
@@ -75,23 +76,28 @@ export default function NuevaVenta() {
 
   const [efectivizando, setEfectivizando] = React.useState(false);
 
-  const [modoPago, setModoPago] = React.useState('');
-  const [pago, setPago] = React.useState(0);
+  // NUEVO: hasta 2 métodos de pago
+  const [pagos, setPagos] = React.useState([
+    { metodo: '', monto: 0 },
+  ]);
+  const [mostrarSegundoPago, setMostrarSegundoPago] = React.useState(false);
+
+  // campos contables adicionales
   const [cobrarImpuestos, setCobrarImpuestos] = React.useState(false);
   const tasaImpuestos = 0.16;
-  const [showInsufficientPaymentWarning, setShowInsufficientPaymentWarning] = React.useState(false);
-  // campos contables adicionales
   const [envio, setEnvio] = React.useState(0);
   const [comision, setComision] = React.useState(0);
   const [publicidad, setPublicidad] = React.useState(0);
   const [rebajas, setRebajas] = React.useState(0);
+  const [showInsufficientPaymentWarning, setShowInsufficientPaymentWarning] = React.useState(false);
 
   const totalBaseOperacion = Math.max(0, Number(total) + Number(envio) + Number(comision) - Number(publicidad) - Number(rebajas));
   const totalConImpuestos = cobrarImpuestos ? (totalBaseOperacion / (1 - tasaImpuestos)) : totalBaseOperacion;
   const impuestosCalculados = cobrarImpuestos ? (totalConImpuestos - totalBaseOperacion) : 0;
   const totalCobrar = Number(totalConImpuestos.toFixed(2));
-  const cambio = pago > 0 ? pago - totalCobrar : 0;
-  const pagoInsuficiente = modoPago === 'efectivo' && pago > 0 && pago < totalCobrar;
+  const sumaPagos = pagos.reduce((acc, p) => acc + Number(p.monto || 0), 0);
+  const cambio = sumaPagos > 0 ? sumaPagos - totalCobrar : 0;
+  const pagoInsuficiente = sumaPagos > 0 && sumaPagos < totalCobrar;
 
   const printerRef = useRef<TicketPrinterHandle>(null);
   const efectivizarBtnRef = useRef<HTMLButtonElement>(null);
@@ -272,18 +278,24 @@ export default function NuevaVenta() {
   }, []);
 
   // pago auto
-  useEffect(() => {
-    if (modoPago && modoPago !== 'efectivo') setPago(totalCobrar);
-    if (!modoPago) setPago(0);
-  }, [modoPago, totalCobrar]);
 
-  // warning visual si el pago en efectivo es menor al total
+  // Sincroniza pagos con total
   useEffect(() => {
-    if (pagoInsuficiente) {
-      setShowInsufficientPaymentWarning(true);
-    } else {
-      setShowInsufficientPaymentWarning(false);
-    }
+    // Si método no es efectivo, autollenar monto
+    setPagos((prev) => prev.map((p, idx) => {
+      if (p.metodo && p.metodo !== 'efectivo' && Number(p.monto) === 0) {
+        // Si hay dos pagos, el segundo es el resto
+        if (mostrarSegundoPago && idx === 1) {
+          return { ...p, monto: Math.max(0, totalCobrar - (Number(prev[0]?.monto) || 0)) };
+        }
+        return { ...p, monto: totalCobrar };
+      }
+      return p;
+    }));
+  }, [pagos[0]?.metodo, pagos[1]?.metodo, totalCobrar, mostrarSegundoPago]);
+
+  useEffect(() => {
+    setShowInsufficientPaymentWarning(pagoInsuficiente);
   }, [pagoInsuficiente]);
 
   useEffect(() => {
@@ -537,15 +549,21 @@ export default function NuevaVenta() {
   }, []);
 
   const efectivizarVenta = useCallback(async () => {
+      // ...existing code...
     if (carrito.length === 0) { showToast('El carrito esta vacio', 'error'); return; }
-    if (!modoPago) { showToast('Selecciona un metodo de pago', 'error'); return; }
+    if (!pagos[0].metodo || pagos[0].monto <= 0) { showToast('Selecciona al menos un método de pago y monto', 'error'); return; }
+    if (mostrarSegundoPago && (!pagos[1].metodo || pagos[1].monto <= 0)) { showToast('Completa el segundo método de pago y monto', 'error'); return; }
+    if (sumaPagos < totalCobrar) { showToast('La suma de los pagos es insuficiente', 'error'); return; }
+    if (sumaPagos > totalCobrar + 0.01) { showToast('La suma de los pagos supera el total', 'error'); return; }
     if (cliente.requiereFactura && (!cliente.nombre.trim() || !cliente.nit.trim())) { showToast('Completa los datos de facturacion (nombre y NIT)', 'error'); return; }
-    if (modoPago === 'efectivo' && pago < totalCobrar) { showToast('El pago recibido es insuficiente', 'error'); return; }
 
-
-    // --- FLUJO ROBUSTO: Consulta y migra todos los datos completos de productos y packs ---
     setEfectivizando(true);
     try {
+      // Obtener token y usuario solo una vez
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      const userId = sessionData?.session?.user?.id || null;
+      const userEmail = sessionData?.session?.user?.email || null;
       // 1. Agrupar productos y packs del carrito
       const productosIds = carrito.filter(p => p.tipo !== 'pack' && p.user_id).map(p => String(p.user_id));
       const packsIds = carrito.filter(p => p.tipo === 'pack' && p.pack_id).map(p => String(p.pack_id));
@@ -584,20 +602,20 @@ export default function NuevaVenta() {
       };
 
       // 5. Usuario actual
-      const { data: sessionData } = await supabase.auth.getSession();
-      const userId = sessionData?.session?.user?.id || null;
-      const userEmail = sessionData?.session?.user?.email || null;
+      // (ya definido arriba)
 
       // 6. Crear venta
+
+      // Guardar venta principal
       const { data: venta, error: ventaError } = await ventasService.crearVenta({
         cliente_nombre: cliente.nombre,
         cliente_telefono: cliente.telefono,
         cliente_email: cliente.email,
         cliente_nit: cliente.nit,
         requiere_factura: cliente.requiereFactura,
-        modo_pago: modoPago,
+        modo_pago: pagos.map(p=>p.metodo).join(' + '),
         total: totalCobrar,
-        pago,
+        pago: sumaPagos,
         cambio,
         usuario_id: userId,
         usuario_email: userEmail,
@@ -605,6 +623,25 @@ export default function NuevaVenta() {
         costos_extra
       });
       if (ventaError || !venta) throw ventaError || new Error('no venta');
+
+      // Guardar pagos en ventas_pagos
+      // Definir saleDate después de crear venta
+      const saleDate = venta?.fecha || new Date().toISOString();
+      // Insertar cada pago en ventas_pagos
+      for (const pagoObj of pagos) {
+        if (!pagoObj.metodo || pagoObj.monto <= 0) continue;
+        const pagoVenta = {
+          venta_id: venta.id,
+          monto: pagoObj.monto,
+          metodo_pago: pagoObj.metodo,
+          usuario_email: userEmail,
+          created_at: new Date().toISOString(),
+        };
+        Object.keys(pagoVenta).forEach(k => {
+          if (pagoVenta[k] === undefined) delete pagoVenta[k];
+        });
+        await ventasService.insertarVentaPago(pagoVenta);
+      }
 
       // 7. Insertar detalles robustos
       await Promise.all(carrito.map(async (p) => {
@@ -690,8 +727,39 @@ export default function NuevaVenta() {
         await sincronizarStockProducto(productoId, supabase);
       }
 
-      // Sincroniza automáticamente ingresos de ventas con flujo de caja.
-      await registrarIngresoEnCaja(venta);
+
+      // Sincroniza automáticamente ingresos de ventas con flujo de caja, uno por cada método de pago
+      // Usa sessionData, token y saleDate ya definidos arriba
+      for (const pagoObj of pagos) {
+        if (!pagoObj.metodo || pagoObj.monto <= 0) continue;
+        let payment_method = 'other';
+        if (pagoObj.metodo === 'efectivo') payment_method = 'cash';
+        else if (pagoObj.metodo === 'qr') payment_method = 'qr';
+        else if (pagoObj.metodo === 'tarjeta') payment_method = 'other';
+        else if (pagoObj.metodo === 'transferencia') payment_method = 'transfer';
+        if (token) {
+          const response = await fetch('/api/cash/movements', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              date: saleDate.slice(0, 10),
+              type: 'income',
+              payment_method,
+              amount: pagoObj.monto,
+              description: `Ingreso por venta #${venta?.id} (${pagoObj.metodo})`,
+              cashbox_id: 'main',
+            }),
+          });
+          const payload = await response.json().catch(() => null);
+          if (!response.ok || !payload?.success) {
+            showToast(`Error al registrar en caja: ${payload?.error || 'Error desconocido'}`, 'error');
+            console.error('Error cash_movements:', payload?.error || response.statusText);
+          }
+        }
+      }
 
       // snapshot ticket y imprimir
       const _ticket = {
@@ -700,7 +768,7 @@ export default function NuevaVenta() {
         fecha: new Date().toLocaleString(),
         cliente_nombre: cliente.nombre,
         cliente_nit: cliente.nit,
-        modo_pago: modoPago,
+        modo_pago: pagos.map(p=>`${p.metodo}: Bs ${p.monto}`).join(' + '),
         requiere_factura: cliente.requiereFactura,
         subtotal,
         descuento: totalDescuento,
@@ -711,13 +779,13 @@ export default function NuevaVenta() {
         rebajas,
         impuestos: Number(impuestosCalculados.toFixed(2)),
         cobrar_impuestos: cobrarImpuestos,
-        pago,
+        pago: sumaPagos,
         cambio
       };
       printerRef.current?.printComprobante();
       // limpieza de carrito y cliente despuÃ©s de impresiÃ³n
       setCarrito([]);
-      setPago(0);
+      setPagos([{ metodo: '', monto: 0 }]);
       // reset costos
       setEnvio(0); setComision(0); setPublicidad(0); setRebajas(0); setCobrarImpuestos(false);
       cambiarCampo('nombre',''); cambiarCampo('carnet',''); cambiarCampo('telefono',''); cambiarCampo('email',''); cambiarCampo('nit',''); cambiarCampo('guardado',false); cambiarCampo('requiereFactura',false);
@@ -739,7 +807,7 @@ export default function NuevaVenta() {
       showToast('Error al crear venta: ' + errorMessage, 'error');
       setEfectivizando(false);
     }
-  }, [carrito, cliente, modoPago, pago, cambio, totalCobrar, subtotal, totalDescuento, packs, setCarrito, cambiarCampo, envio, comision, publicidad, rebajas, impuestosCalculados, cobrarImpuestos, registrarIngresoEnCaja]);
+  }, [carrito, cliente, pagos, cambio, totalCobrar, subtotal, totalDescuento, packs, setCarrito, cambiarCampo, envio, comision, publicidad, rebajas, impuestosCalculados, cobrarImpuestos, registrarIngresoEnCaja]);
 
   // ...continued building UI mostly replicates previous layout using components
 
@@ -789,30 +857,6 @@ export default function NuevaVenta() {
               />
               Cobrar IVA + IT (16% sobre precio final)
             </label>
-            {modoPago === 'efectivo' && (
-              <div className="flex flex-col gap-2 mt-2">
-                <label className="text-gray-900 font-bold">Pago recibido:</label>
-                <input
-                  type="number"
-                  min={0}
-                  step={0.01}
-                  className="border border-gray-900 bg-white text-gray-900 rounded px-3 py-2 placeholder-gray-700 focus:border-gray-900 focus:ring focus:ring-gray-900/30"
-                  placeholder="Monto recibido"
-                  value={pago}
-                  onChange={e => setPago(Number(e.target.value))}
-                />
-                <span className="text-gray-900 font-bold">Cambio: <span className={cambio < 0 ? 'text-red-700' : 'text-green-700'}>Bs {cambio.toFixed(2)}</span></span>
-              </div>
-            )}
-            {modoPago && (
-              <button
-                className="w-full bg-blue-700 hover:bg-blue-800 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-bold py-2 rounded-lg text-lg print:hidden mt-2"
-                onClick={() => printerRef.current?.printComprobante()}
-                disabled={pagoInsuficiente}
-              >
-                {cliente.requiereFactura ? 'Imprimir factura' : 'Imprimir comprobante'}
-              </button>
-            )}
           </div>
         </div>
         <div className="col-span-2 p-6">
@@ -824,28 +868,51 @@ export default function NuevaVenta() {
             onBuscarEmailHistorico={buscarEmailHistorico}
           />
 
-          <div className="mb-4 flex flex-col sm:flex-row gap-2 items-center">
+          {/* Métodos de pago */}
+          <div className="mb-4 flex flex-col gap-2">
             <label className="font-bold text-gray-900">Modo de pago:</label>
-            <div className="flex gap-2 flex-wrap">
-              {['efectivo','tarjeta','qr','transferencia'].map(m => (
-                <button key={m} type="button" onClick={() => setModoPago(m)} className={`px-3 py-2 rounded-full font-semibold transition ${modoPago === m ? 'bg-green-700 text-white shadow' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'}`}>
-                  {m.charAt(0).toUpperCase()+m.slice(1)}
-                </button>
-              ))}
-            </div>
-            <div className="ml-auto flex items-center gap-3">
+            {[0, mostrarSegundoPago ? 1 : null].filter(i => i !== null).map((idx) => (
+              <div key={idx} className="flex gap-2 flex-wrap items-center mb-2">
+                {['efectivo','tarjeta','qr','transferencia'].map(m => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setPagos(p => p.map((pago, i) => i === idx ? { ...pago, metodo: m } : pago))}
+                    className={`px-3 py-2 rounded-full font-semibold transition ${(pagos[idx] && pagos[idx].metodo === m) ? 'bg-green-700 text-white shadow' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'}`}
+                  >
+                    {m.charAt(0).toUpperCase()+m.slice(1)}
+                  </button>
+                ))}
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  className="w-40 border border-gray-900 bg-white text-gray-900 rounded px-3 py-2 placeholder-gray-700 focus:border-gray-900 focus:ring focus:ring-gray-900/30"
+                  placeholder="Monto"
+                  value={pagos[idx]?.monto ?? ''}
+                  onChange={e => setPagos(p => p.map((pago, i) => i === idx ? { ...pago, monto: Number(e.target.value) } : pago))}
+                />
+                {idx === 0 && (
+                  <span className="text-sm text-gray-700">Cambio: <span className={cambio < 0 ? 'text-red-700' : 'text-green-700'}>Bs {cambio.toFixed(2)}</span></span>
+                )}
+              </div>
+            ))}
+            {/* Checkbox para segundo método */}
+            <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-800 mt-2">
               <input
-                type="number"
-                min={0}
-                step={0.01}
-                className="w-40 border border-gray-900 bg-white text-gray-900 rounded px-3 py-2 placeholder-gray-700 focus:border-gray-900 focus:ring focus:ring-gray-900/30"
-                placeholder="Pago recibido"
-                value={pago}
-                onChange={e => setPago(Number(e.target.value))}
+                type="checkbox"
+                checked={mostrarSegundoPago}
+                onChange={e => {
+                  setMostrarSegundoPago(e.target.checked);
+                  setPagos(p => e.target.checked ? (p.length === 1 ? [...p, { metodo: '', monto: 0 }] : p) : [p[0]]);
+                }}
+                className="w-4 h-4"
               />
-              <div className="text-sm text-gray-700">Cambio: <span className={cambio < 0 ? 'text-red-700' : 'text-green-700'}>Bs {cambio.toFixed(2)}</span></div>
-            </div>
+              ¿Tienes otro método de pago?
+            </label>
           </div>
+
+          {/* ...existing code... */}
 
           <BuscadorProductos
             busqueda={busqueda}
@@ -888,8 +955,8 @@ export default function NuevaVenta() {
             subtotal={subtotal}
             totalDescuento={totalDescuento}
             total={total}
-            modoPago={modoPago}
-            pago={pago}
+            modoPago={pagos.map(p=>p.metodo).join(' + ')}
+            pago={sumaPagos}
             cambio={cambio}
             packs={packs}
             promociones={promociones}
@@ -905,7 +972,7 @@ export default function NuevaVenta() {
           {showInsufficientPaymentWarning && (
             <div className="mt-4 p-4 rounded-lg border border-red-300 bg-red-50">
               <p className="text-red-800 font-bold">El pago recibido es insuficiente</p>
-              <p className="text-red-700 text-sm">Faltan: Bs {(totalCobrar - pago).toFixed(2)}</p>
+              <p className="text-red-700 text-sm">Faltan: Bs {(totalCobrar - sumaPagos).toFixed(2)}</p>
             </div>
           )}
 
@@ -942,7 +1009,7 @@ export default function NuevaVenta() {
         carrito={carrito}
         clienteNombre={cliente.nombre}
         clienteNIT={cliente.nit}
-        modoPago={modoPago}
+        modoPago={pagos.map(p=>`${p.metodo}: Bs ${p.monto}`).join(' + ')}
         requiereFactura={cliente.requiereFactura}
         subtotal={subtotal}
         totalDescuento={totalDescuento}
@@ -953,7 +1020,7 @@ export default function NuevaVenta() {
         rebajas={rebajas}
         impuestos={Number(impuestosCalculados.toFixed(2))}
         cobrarImpuestos={cobrarImpuestos}
-        pago={pago}
+        pago={sumaPagos}
         cambio={cambio}
         ultimoTicket={undefined}
         setUltimoTicket={() => {}}

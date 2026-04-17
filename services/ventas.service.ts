@@ -1,3 +1,11 @@
+export async function insertarVentaPago(pago: GenericPayload) {
+  // Limpiar claves undefined o null
+  const cleanPago: GenericPayload = { ...pago };
+  Object.keys(cleanPago).forEach(k => {
+    if (cleanPago[k] === undefined || cleanPago[k] === null) delete cleanPago[k];
+  });
+  return supabase.from('ventas_pagos').insert([cleanPago]);
+}
 import { supabase } from '../lib/SupabaseClient';
 
 type GenericPayload = Record<string, unknown>;
@@ -14,7 +22,12 @@ export async function crearVenta(data: GenericPayload) {
 }
 
 export async function insertarVentaDetalle(item: GenericPayload) {
-  return supabase.from('ventas_detalle').insert([item]);
+  // Limpiar claves undefined o null
+  const cleanItem: GenericPayload = { ...item };
+  Object.keys(cleanItem).forEach(k => {
+    if (cleanItem[k] === undefined || cleanItem[k] === null) delete cleanItem[k];
+  });
+  return supabase.from('ventas_detalle').insert([cleanItem]);
 }
 
 export async function descontarStock(pid: ProductoId, cantidad: number) {
