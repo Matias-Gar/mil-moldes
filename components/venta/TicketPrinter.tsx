@@ -193,7 +193,12 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
 
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(9);
-      doc.text('COMPROBANTE TIENDA', PAPER_WIDTH / 2, y, { align: 'center' });
+      // Encabezado: si es cotización, mostrarlo
+      if (ticketSnapshot.cotizacion) {
+        doc.text('COTIZACIÓN', PAPER_WIDTH / 2, y, { align: 'center' });
+      } else {
+        doc.text('COMPROBANTE TIENDA', PAPER_WIDTH / 2, y, { align: 'center' });
+      }
       y += 3;
       doc.setFontSize(7);
       doc.text(branding.storeName || 'Tienda', PAPER_WIDTH / 2, y, { align: 'center' });
@@ -211,7 +216,10 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
 
       doc.text(`Fecha: ${ticketSnapshot.fecha || new Date().toLocaleString()}`, MARGIN, y); y += 3;
       doc.text(`Cliente: ${ticketSnapshot.cliente_nombre || '-'}`, MARGIN, y); y += 3;
-      doc.text(`Pago: ${ticketSnapshot.modo_pago || '-'}`, MARGIN, y); y += 3;
+      // Solo mostrar método de pago si no es cotización
+      if (!ticketSnapshot.cotizacion) {
+        doc.text(`Pago: ${ticketSnapshot.modo_pago || '-'}`, MARGIN, y); y += 3;
+      }
       doc.line(MARGIN, y, PAPER_WIDTH - MARGIN, y); y += 3;
 
       doc.setFont('courier', 'bold');
@@ -284,8 +292,10 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
       if (rebajas > 0) { doc.text('REBAJAS', MARGIN, y); doc.text(`-Bs ${rebajas.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 2.5; }
       if (impuestos > 0) { doc.text('IVA+IT (16%)', MARGIN, y); doc.text(`+Bs ${impuestos.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 2.5; }
       doc.text('TOTAL', MARGIN, y); doc.text(`Bs ${total.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 2.5;
-      doc.text('PAGO', MARGIN, y); doc.text(`Bs ${pago.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 2.5;
-      doc.text('CAMBIO', MARGIN, y); doc.text(`Bs ${cambio.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 4;
+      if (!ticketSnapshot.cotizacion) {
+        doc.text('PAGO', MARGIN, y); doc.text(`Bs ${pago.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 2.5;
+        doc.text('CAMBIO', MARGIN, y); doc.text(`Bs ${cambio.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 4;
+      }
 
       try {
         // QR de contacto Whatsapp y comprobante digital
@@ -320,7 +330,11 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
       }
 
       doc.setFontSize(6);
-      doc.text('¡Gracias por su compra!', PAPER_WIDTH / 2, y, { align: 'center' });
+      if (ticketSnapshot.cotizacion) {
+        doc.text('Este documento es una cotización/proforma.', PAPER_WIDTH / 2, y, { align: 'center' });
+      } else {
+        doc.text('¡Gracias por su compra!', PAPER_WIDTH / 2, y, { align: 'center' });
+      }
       y += 5;
 
       const blob = doc.output('blob');
@@ -467,20 +481,18 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
     }
   }
 
-  async function printComprobante() {
-    if (!props.modoPago) return alert('Selecciona un método de pago antes de imprimir');
-    if (props.modoPago === 'efectivo' && Number(props.pago || 0) < Number(props.total || 0)) {
-      return alert('El pago recibido es insuficiente');
-    }
+  async function printComprobante(opts?: { cotizacion?: boolean }) {
     if ((!props.carrito || props.carrito.length === 0) && !props.ultimoTicket) return alert('No hay productos para imprimir');
+    const isCotizacion = opts && opts.cotizacion;
     const ticket = (props.ultimoTicket && (!props.carrito || props.carrito.length === 0))
       ? props.ultimoTicket
       : {
           fecha: new Date().toLocaleString(),
           cliente_nombre: props.clienteNombre,
           cliente_nit: props.clienteNIT,
-          modo_pago: props.modoPago,
+          modo_pago: isCotizacion ? undefined : props.modoPago,
           requiere_factura: props.requiereFactura,
+          cotizacion: isCotizacion,
           items: (props.carrito || []).map(it => ({
             ...it,
             precio_original: it.precio_original ?? it.precio ?? it.precio_unitario ?? 0,
@@ -497,8 +509,8 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
           impuestos: props.impuestos || 0,
           cobrar_impuestos: props.cobrarImpuestos || false,
           total: props.total,
-          pago: props.pago,
-          cambio: props.cambio
+          pago: isCotizacion ? undefined : props.pago,
+          cambio: isCotizacion ? undefined : props.cambio
         };
     props.setUltimoTicket(ticket);
     try {

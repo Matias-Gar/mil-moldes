@@ -6,7 +6,26 @@ export async function insertarVentaPago(pago: GenericPayload) {
   });
   return supabase.from('ventas_pagos').insert([cleanPago]);
 }
-import { supabase } from '../lib/SupabaseClient';
+import { createClient } from '@supabase/supabase-js';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+// Token anónimo persistente para identificar el carrito
+let carritoToken = null;
+if (typeof window !== 'undefined') {
+  carritoToken = localStorage.getItem('carrito_token');
+  if (!carritoToken) {
+    carritoToken = crypto.randomUUID();
+    localStorage.setItem('carrito_token', carritoToken);
+  }
+}
+
+// Cliente Supabase con header personalizado
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  global: {
+    headers: carritoToken ? { 'carrito-token': carritoToken } : {},
+  },
+});
 
 type GenericPayload = Record<string, unknown>;
 type ProductoId = string | number;
@@ -56,7 +75,9 @@ export async function descontarStock(pid: ProductoId, cantidad: number) {
 }
 
 export async function guardarCarritoPendiente(payload: GenericPayload) {
-  return supabase.from('carritos_pendientes').insert([payload]);
+  // Asegura que el token se incluya en el payload
+  const finalPayload = { ...payload, carrito_token: carritoToken };
+  return supabase.from('carritos_pendientes').insert([finalPayload]);
 }
 
 export async function fetchCarritosPendientes() {

@@ -1,4 +1,18 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+
+// Token anónimo persistente para identificar el carrito (compatible SSR/Next.js)
+let carritoToken: string | null = null;
+if (typeof window !== 'undefined') {
+  carritoToken = localStorage.getItem('carrito_token');
+  if (!carritoToken) {
+    carritoToken = crypto.randomUUID();
+    localStorage.setItem('carrito_token', carritoToken);
+  }
+}
+
+export function getCarritoToken() {
+  return carritoToken;
+}
 import { calcularPrecioConPromocion } from '../lib/promociones';
 import { usePacks, calcularDescuentoPack } from '../lib/packs';
 

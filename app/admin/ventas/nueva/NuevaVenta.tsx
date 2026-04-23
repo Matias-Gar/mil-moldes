@@ -1,6 +1,6 @@
 ﻿"use client";
 import React, { useEffect, useRef, useCallback } from 'react';
-import { useCarrito } from '../../../../hooks/useCarrito';
+import { useCarrito, getCarritoToken } from '../../../../hooks/useCarrito';
 import { useCliente } from '../../../../hooks/useCliente';
 import { useProductos } from '../../../../hooks/useProductos';
 import { usePromociones } from '../../../../lib/usePromociones';
@@ -731,6 +731,16 @@ export default function NuevaVenta() {
 
   // ...continued building UI mostly replicates previous layout using components
 
+  // Pasar costos extra al window para que CarritoPanel los pueda mostrar
+  if (typeof window !== 'undefined') {
+    window.__COSTOS_EXTRA__ = {
+      envio,
+      comision,
+      publicidad,
+      rebajas,
+      impuestos: Number(impuestosCalculados.toFixed(2))
+    };
+  }
   return (
     <div className="min-h-screen w-full flex flex-col items-center justify-start py-8 px-2 bg-gradient-to-br from-gray-100 to-gray-300">
       <h1 className="text-3xl font-extrabold mb-8 text-gray-900 w-full text-center">Nueva Venta</h1>
@@ -777,6 +787,22 @@ export default function NuevaVenta() {
               />
               Cobrar IVA + IT (16% sobre precio final)
             </label>
+            {/* Botón Cotización */}
+            {carrito.length > 0 && (
+              <div className="flex mt-4">
+                <button
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg text-lg"
+                  type="button"
+                  onClick={() => {
+                    printerRef.current?.printComprobante({
+                      cotizacion: true // para distinguir en el comprobante si se requiere
+                    });
+                  }}
+                >
+                  Imprimir cotización
+                </button>
+              </div>
+            )}
           </div>
         </div>
         <div className="col-span-2 p-6">
@@ -809,8 +835,11 @@ export default function NuevaVenta() {
                   step={0.01}
                   className="w-40 border border-gray-900 bg-white text-gray-900 rounded px-3 py-2 placeholder-gray-700 focus:border-gray-900 focus:ring focus:ring-gray-900/30"
                   placeholder="Monto"
-                  value={pagos[idx]?.monto ?? ''}
-                  onChange={e => setPagos(p => p.map((pago, i) => i === idx ? { ...pago, monto: Number(e.target.value) } : pago))}
+                  value={typeof pagos[idx]?.monto === 'number' && !isNaN(pagos[idx]?.monto) ? pagos[idx].monto.toFixed(2) : (pagos[idx]?.monto ?? '')}
+                  onChange={e => {
+                    const val = Number(e.target.value);
+                    setPagos(p => p.map((pago, i) => i === idx ? { ...pago, monto: isNaN(val) ? '' : Number(val.toFixed(2)) } : pago));
+                  }}
                 />
                 {idx === 0 && (
                   <span className="text-sm text-gray-700">Cambio: <span className={cambio < 0 ? 'text-red-700' : 'text-green-700'}>Bs {cambio.toFixed(2)}</span></span>

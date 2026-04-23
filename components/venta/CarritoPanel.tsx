@@ -181,10 +181,31 @@ export default function CarritoPanel({
               })}
             </tbody>
           </table>
+          {/* Resumen de totales y costos extra */}
           <div className="text-right mt-4 text-xl font-bold text-gray-900">
-            Subtotal: Bs {subtotal.toFixed(2)}<br />
-            {totalDescuento > 0 && <span className="text-green-700">Descuentos: -Bs {totalDescuento.toFixed(2)}</span>}<br />
-            <span className="text-2xl">Total: Bs {total.toFixed(2)}</span>
+            {(() => {
+              let envio = 0, comision = 0, publicidad = 0, rebajas = 0, impuestos = 0;
+              if (typeof window !== 'undefined' && window.__COSTOS_EXTRA__) {
+                envio = Number(window.__COSTOS_EXTRA__.envio) || 0;
+                comision = Number(window.__COSTOS_EXTRA__.comision) || 0;
+                publicidad = Number(window.__COSTOS_EXTRA__.publicidad) || 0;
+                rebajas = Number(window.__COSTOS_EXTRA__.rebajas) || 0;
+                impuestos = Number(window.__COSTOS_EXTRA__.impuestos) || 0;
+              }
+              const totalACobrar = subtotal - totalDescuento + envio + comision + impuestos - publicidad - rebajas;
+              return (
+                <>
+                  <div>Subtotal: Bs {subtotal.toFixed(2)}</div>
+                  {totalDescuento > 0 && <div className="text-green-700">Descuentos: -Bs {totalDescuento.toFixed(2)}</div>}
+                  {envio > 0 && <div className="text-blue-700">Envío: +Bs {envio.toFixed(2)}</div>}
+                  {comision > 0 && <div className="text-blue-700">Comisión: +Bs {comision.toFixed(2)}</div>}
+                  {publicidad > 0 && <div className="text-blue-700">Publicidad: -Bs {publicidad.toFixed(2)}</div>}
+                  {rebajas > 0 && <div className="text-blue-700">Rebajas: -Bs {rebajas.toFixed(2)}</div>}
+                  {impuestos > 0 && <div className="text-amber-700">IVA+IT (16%): +Bs {impuestos.toFixed(2)}</div>}
+                  <div className="text-2xl">Total a cobrar: Bs {totalACobrar.toFixed(2)}</div>
+                </>
+              );
+            })()}
           </div>
           {!carrito.length && null}
         </div>
