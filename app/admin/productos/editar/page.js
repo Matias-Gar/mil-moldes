@@ -5,7 +5,7 @@ import ConfirmModal from "@/components/ConfirmModal";
 import ProductCard from "@/components/ProductCard";
 import { Toast } from "@/components/ui/Toast";
 import { showToast } from "@/components/ui/Toast";
-import { supabase } from "@/lib/SupabaseClient";
+import { getSupabaseClient } from "@/lib/SupabaseClient";
 import { Input } from "@/components/ui/input";
 import { registrarMovimientoStock } from "@/lib/stockMovimientos";
 import { registrarHistorialProducto } from "@/lib/productosHistorial";
@@ -20,6 +20,7 @@ export default function EditarCatalogo() {
         setLoading(true);
         try {
           // Productos
+          const supabase = getSupabaseClient();
           const { data: productosData, error: productosError } = await supabase
             .from("productos")
             .select("*")
@@ -27,18 +28,21 @@ export default function EditarCatalogo() {
           if (productosError) throw productosError;
 
           // Imágenes
+          const supabase = getSupabaseClient();
           const { data: imagenesData, error: imagenesError } = await supabase
             .from("producto_imagenes")
             .select("id, producto_id, imagen_url");
           if (imagenesError) throw imagenesError;
 
           // Variantes
+          const supabase = getSupabaseClient();
           const { data: variantesData, error: variantesError } = await supabase
             .from("producto_variantes")
             .select("*");
           if (variantesError) throw variantesError;
 
           // Categorías
+          const supabase = getSupabaseClient();
           const { data: categoriesData, error: categoriesError } = await supabase
             .from("categorias")
             .select("id, categori");
@@ -274,6 +278,7 @@ export default function EditarCatalogo() {
         imagen_url: imagenPrincipal || productoActual?.imagen_url || '/sin-imagen.png',
       };
 
+      const supabase = getSupabaseClient();
       let updateQuery = supabase.from("productos").update(updatePayload);
       if (productoActual?.user_id !== undefined && productoActual?.user_id !== null) {
         updateQuery = updateQuery.eq("user_id", productoActual.user_id);
@@ -285,12 +290,14 @@ export default function EditarCatalogo() {
 
       // 2. Sincronizar variantes
       // Obtener variantes actuales en BD
+      const supabase = getSupabaseClient();
       const { data: variantesBD } = await supabase
         .from("producto_variantes")
         .select("id, producto_id, color, talla, stock, sku, precio, imagen_url, activo").eq("producto_id", productoActual.user_id);
       // Eliminar variantes quitadas
       for (const vBD of variantesBD || []) {
         if (!nuevasVariantes.some(v => v.id === vBD.id)) {
+          const supabase = getSupabaseClient();
           await supabase.from("producto_variantes").delete().eq("id", vBD.id);
         }
       }
@@ -298,6 +305,7 @@ export default function EditarCatalogo() {
       for (const v of nuevasVariantes) {
         if (v.id) {
           // Actualizar
+          const supabase = getSupabaseClient();
           const { error: updateVarError } = await supabase.from("producto_variantes").update({
             color: v.color,
             stock: parseInt(v.stock, 10) || 0,
@@ -315,6 +323,7 @@ export default function EditarCatalogo() {
             showToast("El color no puede estar vacío.", "error");
             continue;
           }
+          const supabase = getSupabaseClient();
           const { error: insertVarError } = await supabase.from("producto_variantes").insert({
             producto_id: productoActual.user_id,
             color: v.color,
@@ -332,18 +341,21 @@ export default function EditarCatalogo() {
 
       // 3. Sincronizar imágenes
       // Obtener imágenes actuales en BD
+      const supabase = getSupabaseClient();
       const { data: imagenesBD } = await supabase
         .from("producto_imagenes")
         .select("id, producto_id, imagen_url").eq("producto_id", productoActual.user_id);
       // Eliminar imágenes quitadas
       for (const imgBD of imagenesBD || []) {
         if (!nuevasImagenes.some(img => img.id === imgBD.id || img.imagen_url === imgBD.imagen_url)) {
+          const supabase = getSupabaseClient();
           await supabase.from("producto_imagenes").delete().eq("id", imgBD.id);
         }
       }
       // Insertar nuevas imágenes
       for (const img of nuevasImagenes) {
         if (!img.id) {
+          const supabase = getSupabaseClient();
           await supabase.from("producto_imagenes").insert({
             producto_id: productoActual.user_id,
             imagen_url: img.imagen_url || img,
@@ -354,6 +366,7 @@ export default function EditarCatalogo() {
       showToast("Producto actualizado con éxito!");
 
       // Refrescar variantes desde la base de datos para reflejar el cambio en la UI
+      const supabase = getSupabaseClient();
       const { data: variantesActualizadas, error: variantesRefreshError } = await supabase
         .from("producto_variantes")
         .select("*")

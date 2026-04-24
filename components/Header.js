@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { supabase } from '../lib/SupabaseClient'; // Asegúrate que esta ruta es correcta
+import { getSupabaseClient } from '../lib/SupabaseClient';
 import { DEFAULT_STORE_SETTINGS, fetchStoreSettings } from '../lib/storeSettings';
 import { getDefaultAdminRoute, isAdminPanelRole } from '../lib/adminPermissions';
 

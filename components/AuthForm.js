@@ -1,7 +1,7 @@
 "use client";
 import { useState } from 'react';
 import RecuperarContrasenaForm from './RecuperarContrasenaForm';
-import { supabase } from "../lib/SupabaseClient"; // Ajusta esta ruta si es necesario
+import { getSupabaseClient } from "../lib/SupabaseClient";
 
 export default function AuthForm({ onLoginSuccess }) {
   const [email, setEmail] = useState('');

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "../../../lib/SupabaseClient";
+import { getSupabaseClient } from "../../../lib/SupabaseClient";
 import { showToast } from "../../../components/ui/Toast";
 
 export default function AdminCategorias() {
@@ -20,6 +20,7 @@ export default function AdminCategorias() {
   }, []);
 
   async function fetchCategorias() {
+    const supabase = getSupabaseClient();
     const { data, error } = await supabase.from("categorias").select("*");
     if (error) {
       showToast("Error al cargar categorías", "error");
@@ -29,6 +30,7 @@ export default function AdminCategorias() {
   }
 
   async function fetchProductos() {
+    const supabase = getSupabaseClient();
     const { data, error } = await supabase.from("productos").select("*");
     if (error) {
       showToast("Error al cargar productos", "error");
@@ -41,6 +43,7 @@ export default function AdminCategorias() {
     e.preventDefault();
     if (!nuevaCategoria.trim()) return;
 
+    const supabase = getSupabaseClient();
     const { error } = await supabase
       .from("categorias")
       .insert({ categori: nuevaCategoria });
@@ -62,6 +65,7 @@ export default function AdminCategorias() {
   async function handleEliminar(id) {
     if (!confirm("¿Eliminar esta categoría?")) return;
 
+    const supabase = getSupabaseClient();
     const { error } = await supabase.from("categorias").delete().eq("id", id);
 
     if (error) {
@@ -75,6 +79,7 @@ export default function AdminCategorias() {
   async function handleGuardarEdit(id) {
     if (!nombreEdit.trim()) return;
 
+    const supabase = getSupabaseClient();
     const { error } = await supabase
       .from("categorias")
       .update({ categori: nombreEdit })

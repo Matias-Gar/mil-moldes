@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
-import { supabase } from "../../../../lib/SupabaseClient";
+import { getSupabaseClient } from "../../../../lib/SupabaseClient";
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "../../../../components/ui/card";
 import { Button } from "../../../../components/ui/button";
 
@@ -22,6 +22,7 @@ function EliminarProductos(props) {
 
   useEffect(() => {
     async function fetchProductos() {
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from("productos")
         .select("user_id, nombre, precio, stock, categoria, created_at");
@@ -30,6 +31,7 @@ function EliminarProductos(props) {
         // Obtener imágenes
         const ids = data.map(p => p.user_id);
         if (ids.length > 0) {
+          const supabase = getSupabaseClient();
           const { data: imgs } = await supabase
             .from("producto_imagenes")
             .select("producto_id, imagen_url")
@@ -54,8 +56,10 @@ function EliminarProductos(props) {
     let errorOcurrido = false;
     // Registrar movimiento e historial de eliminación
     try {
+      const supabase = getSupabaseClient();
       const user = (await supabase.auth.getUser())?.data?.user;
       // Buscar el producto para obtener los datos antes de eliminar
+      const supabase = getSupabaseClient();
       const { data: prodData } = await supabase.from("productos").select("*").eq("user_id", user_id).single();
       const movimientoPayload = {
         producto_id: Number(user_id),
@@ -96,9 +100,11 @@ function EliminarProductos(props) {
     ];
     const userIdBigInt = Number(user_id);
     console.log("user_id recibido para eliminar:", user_id, typeof user_id, "userIdBigInt:", userIdBigInt, typeof userIdBigInt);
+    const supabase = getSupabaseClient();
     const { data: variantesAntes } = await supabase.from("producto_variantes").select("*").eq("producto_id", userIdBigInt);
     console.log("Variantes antes de borrar:", variantesAntes);
     // Eliminar variantes primero y mostrar error específico si ocurre
+    const supabase = getSupabaseClient();
     const { error: variantesError, data: variantesBorradas } = await supabase.from("producto_variantes").delete().eq("producto_id", userIdBigInt);
     console.log("Variantes borradas:", variantesBorradas, "Error:", variantesError);
     if (variantesError) {
@@ -106,6 +112,7 @@ function EliminarProductos(props) {
       errorOcurrido = true;
     }
     for (const tabla of dependencias) {
+      const supabase = getSupabaseClient();
       const { error } = await supabase.from(tabla).delete().eq("producto_id", user_id);
       if (error) {
         showToast(`Error eliminando en ${tabla}: ${error.message}`, "error");
@@ -113,6 +120,7 @@ function EliminarProductos(props) {
       }
     }
     // Finalmente, eliminar el producto
+    const supabase = getSupabaseClient();
     const { error: prodError } = await supabase.from("productos").delete().eq("user_id", user_id);
     if (prodError) {
       showToast("Error eliminando producto: " + prodError.message, "error");

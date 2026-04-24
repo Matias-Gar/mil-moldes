@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { supabase } from "../../../../lib/SupabaseClient";
+import { getSupabaseClient } from "../../../../lib/SupabaseClient";
 import { CONFIG, whatsappUtils } from "../../../../lib/config";
 import { DEFAULT_STORE_SETTINGS, fetchStoreSettings } from "../../../../lib/storeSettings";
 import { Toast, showToast } from "../../../../components/ui/Toast";
@@ -77,6 +77,7 @@ export default function StockPage() {
     let error = null;
     let count = 0;
 
+    const supabase = getSupabaseClient();
     const enrichedQuery = supabase.from("productos").select(`
       user_id,
       nombre,
@@ -95,6 +96,7 @@ export default function StockPage() {
       .range(from, to);
 
     if (enrichedResult.error) {
+      const supabase = getSupabaseClient();
       const fallbackQuery = supabase.from("productos").select(`
         user_id,
         nombre,
@@ -148,6 +150,7 @@ export default function StockPage() {
     let data = null;
 
     // Traer todas las variantes activas, incluidas las de stock 0
+    const supabase = getSupabaseClient();
     const withActive = await supabase
       .from("producto_variantes")
       .select("producto_id, color, stock, activo")
@@ -155,6 +158,7 @@ export default function StockPage() {
       .eq("activo", true);
 
     if (withActive.error) {
+      const supabase = getSupabaseClient();
       const fallback = await supabase
         .from("producto_variantes")
         .select("producto_id, color, stock, activo")
@@ -204,6 +208,7 @@ export default function StockPage() {
   }
 
   async function fetchCategorias() {
+    const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from("categorias")
       .select("categori")
@@ -218,6 +223,7 @@ export default function StockPage() {
   }
 
   async function sendWhatsappAlerta(prod) {
+    const supabase = getSupabaseClient();
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
       showToast("Debes iniciar sesión para enviar alertas", "error");
@@ -276,6 +282,7 @@ export default function StockPage() {
     const orderField = orden === "stock-desc" || orden === "stock-asc" ? "stock" : "user_id";
     const ascending = orden === "asc" || orden === "stock-asc";
 
+    const supabase = getSupabaseClient();
     const enrichedResult = await supabase.from("productos").select(`
       user_id,
       nombre,
@@ -292,6 +299,7 @@ export default function StockPage() {
       return enrichedResult.data || [];
     }
 
+    const supabase = getSupabaseClient();
     const fallbackResult = await supabase.from("productos").select(`
       user_id,
       nombre,

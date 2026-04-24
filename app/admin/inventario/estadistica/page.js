@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { supabase } from "../../../../lib/SupabaseClient";
+import { getSupabaseClient } from "../../../../lib/SupabaseClient";
 import dynamic from "next/dynamic";
 
 const Pie = dynamic(() => import("react-chartjs-2").then(mod => mod.Pie), { ssr: false });
@@ -25,6 +25,7 @@ export default function InventarioEstadisticaPage() {
     async function loadAll() {
       setLoading(true);
       // 1) productos
+      const supabase = getSupabaseClient();
       const { data: prodsData } = await supabase
         .from("productos")
         .select("user_id, nombre, precio, stock, categoria")
@@ -37,6 +38,7 @@ export default function InventarioEstadisticaPage() {
       const fromDate = new Date();
       fromDate.setDate(toDate.getDate() - periodDays);
 
+      const supabase = getSupabaseClient();
       const { data: ventasData } = await supabase
         .from("ventas")
         .select("id, total, fecha")
@@ -50,6 +52,7 @@ export default function InventarioEstadisticaPage() {
       const ventaIds = vData.map(v => v.id).filter(Boolean);
       let dets = [];
       if (ventaIds.length > 0) {
+        const supabase = getSupabaseClient();
         const { data: detData } = await supabase
           .from("ventas_detalle")
           .select("venta_id, producto_id, cantidad, precio_unitario")

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/SupabaseClient";
+import { getSupabaseClient } from "@/lib/SupabaseClient";
 
 import Toast, { showToast } from '../../../../components/ui/Toast';
 
@@ -214,6 +214,7 @@ export default function AumentarStockPage() {
   async function fetchData() {
     setLoading(true);
 
+    const supabase = getSupabaseClient();
     const { data: prods, error: prodsError } = await supabase
       .from("productos")
       .select(`

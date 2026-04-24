@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from 'react';
 import Image from 'next/image';
-import { supabase } from "../lib/SupabaseClient";
+import { getSupabaseClient } from "../lib/SupabaseClient";
 
 export default function PerfilForm({ userId, perfilActual, onSave, isAdminEdit = false }) {
   const [nombre, setNombre] = useState("");

@@ -14,7 +14,7 @@ import {
   YAxis,
 } from "recharts";
 import { Toast, showToast } from "../../../components/ui/Toast";
-import { supabase } from "../../../lib/SupabaseClient";
+import { getSupabaseClient } from "../../../lib/SupabaseClient";
 
 const PAYMENT_OPTIONS = [
   { value: "cash", label: "Efectivo" },
@@ -126,6 +126,7 @@ export default function FlujoCajaPage() {
   const [savingEdit, setSavingEdit] = useState(false);
 
   async function getSessionContext() {
+    const supabase = getSupabaseClient();
     const { data, error } = await supabase.auth.getSession();
     if (error || !data?.session?.user?.id || !data?.session?.access_token) {
       throw new Error("Sesion no valida. Inicia sesion para usar caja.");
@@ -144,6 +145,7 @@ export default function FlujoCajaPage() {
 
     if (resolvedProfileUserRef.current !== uid) {
       resolvedProfileUserRef.current = uid;
+      const supabase = getSupabaseClient();
       const { data: profileData } = await supabase
         .from("perfiles")
         .select("nombre")

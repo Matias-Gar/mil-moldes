@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { supabase } from "../../../../lib/SupabaseClient";
+import { getSupabaseClient } from "../../../../lib/SupabaseClient";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../../components/ui/card";
 import { Button } from "../../../../components/ui/button";
 import { whatsappUtils } from "../../../../lib/config";
@@ -13,6 +13,7 @@ export default function ProximoACompraPage() {
 
   useEffect(() => {
     async function fetchProductos() {
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from("productos")
         .select("user_id, nombre, descripcion, precio, stock, categoria");
@@ -22,6 +23,7 @@ export default function ProximoACompraPage() {
         // Obtener imágenes
         const ids = bajos.map(p => p.user_id);
         if (ids.length > 0) {
+          const supabase = getSupabaseClient();
           const { data: imgs } = await supabase
             .from("producto_imagenes")
             .select("producto_id, imagen_url")

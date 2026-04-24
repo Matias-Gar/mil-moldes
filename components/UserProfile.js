@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '../lib/SupabaseClient';
+import { getSupabaseClient } from '../lib/SupabaseClient';
 import { useRouter } from 'next/navigation';
 
 export default function UserProfile() {

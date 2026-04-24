@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import { supabase } from "../../../../lib/SupabaseClient";
+import { getSupabaseClient } from "../../../../lib/SupabaseClient";
 import { useRouter } from "next/navigation";
 import { getOptimizedImageUrl, buildImageSrcSet } from "../../../../lib/imageOptimization";
 
@@ -35,6 +35,7 @@ export default function CatalogoPage() {
         const maybeBucket = parts[0];
         const maybePath = parts.slice(1).join("/");
         try {
+          const supabase = getSupabaseClient();
           const res = supabase.storage.from(maybeBucket).getPublicUrl(maybePath);
           const pub = res?.data?.publicUrl || res?.publicURL || res?.publicUrl;
           if (pub) return pub;
@@ -43,6 +44,7 @@ export default function CatalogoPage() {
 
       for (const bucket of candidateBuckets) {
         try {
+          const supabase = getSupabaseClient();
           const res = supabase.storage.from(bucket).getPublicUrl(trimmed);
           const pub = res?.data?.publicUrl || res?.publicURL || res?.publicUrl;
           if (pub) return pub;
@@ -53,6 +55,7 @@ export default function CatalogoPage() {
 
     async function load() {
       try {
+        const supabase = getSupabaseClient();
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) {
           setUserRole("not_logged");
@@ -60,6 +63,7 @@ export default function CatalogoPage() {
           return;
         }
 
+        const supabase = getSupabaseClient();
         const { data: profile, error: profileError } = await supabase
           .from("perfiles")
           .select("rol")
@@ -74,10 +78,12 @@ export default function CatalogoPage() {
 
         setUserRole("admin");
 
+        const supabase = getSupabaseClient();
         const { data: catsData } = await supabase.from("categorias").select("*");
         const categorias = Array.isArray(catsData) ? catsData : [];
         setCategoriasDisponibles(categorias.map(c => c.nombre || c.categori || `Cat-${c.id}`));
 
+        const supabase = getSupabaseClient();
         const { data: prodsData } = await supabase
           .from("productos")
           .select("user_id, nombre, descripcion, precio, stock, imagen_url, category_id, codigo_barra, categorias (categori)")
@@ -89,6 +95,7 @@ export default function CatalogoPage() {
 
         let imagenesMap = {};
         if (productIds.length) {
+          const supabase = getSupabaseClient();
           const { data: imgsData } = await supabase
             .from("producto_imagenes")
             .select("producto_id, imagen_url")
@@ -104,6 +111,7 @@ export default function CatalogoPage() {
 
         let variantesMap = {};
         if (productIds.length) {
+          const supabase = getSupabaseClient();
           const { data: varsData } = await supabase
             .from("producto_variantes")
             .select("id, producto_id, color, stock, precio, sku, activo")

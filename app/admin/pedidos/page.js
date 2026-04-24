@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "../../../lib/SupabaseClient";
+import { getSupabaseClient } from "../../../lib/SupabaseClient";
 
 export default function PedidosPage() {
   const [carritos, setCarritos] = useState([]);
@@ -12,6 +12,7 @@ export default function PedidosPage() {
   }, []);
 
   async function fetchCarritos() {
+    const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from("carritos_pendientes")
       .select("id, cliente_nombre, usuario_email, productos, fecha, confirmado_pago")
@@ -38,6 +39,7 @@ export default function PedidosPage() {
 
       // Eliminar los carritos vencidos de la base de datos
       for (const carrito of carritosVencidos) {
+        const supabase = getSupabaseClient();
         await supabase.from("carritos_pendientes").delete().eq("id", carrito.id);
       }
     }
@@ -45,6 +47,7 @@ export default function PedidosPage() {
 
   async function eliminarCarrito(id) {
     if (!window.confirm("¿Estás seguro de que deseas eliminar este pedido? Esta acción no se puede deshacer.")) return;
+    const supabase = getSupabaseClient();
     await supabase.from("carritos_pendientes").delete().eq("id", id);
     fetchCarritos();
   }

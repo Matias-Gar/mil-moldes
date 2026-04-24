@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from "../../lib/SupabaseClient";
+import { getSupabaseClient } from "../../lib/SupabaseClient";
 import Link from 'next/link'; // ¡Importación necesaria para el botón!
 import { ADMIN_MENU, canAccessAdminPath, filterAdminMenuByRole, isAdminPanelRole } from '../../lib/adminPermissions';
 
@@ -11,6 +11,7 @@ export default function AdminDashboard() {
 
     useEffect(() => {
         const checkAuthAndRole = async () => {
+            const supabase = getSupabaseClient();
             const { data: { user } } = await supabase.auth.getUser();
 
             if (!user) {
@@ -20,6 +21,7 @@ export default function AdminDashboard() {
             }
 
             // 1. Verificar el rol en la base de datos
+            const supabase = getSupabaseClient();
             const { data: profile, error } = await supabase
                 .from('perfiles')
                 .select('rol')
@@ -69,7 +71,7 @@ export default function AdminDashboard() {
                 Bienvenido al panel de administración. Aquí puedes ver la información general de la tienda y acceder a las funciones administrativas desde el menú lateral.
             </p>
             {/* Aquí puedes agregar información/resumen de la tienda si lo deseas */}
-            <button onClick={() => supabase.auth.signOut()} className="mt-10 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700">
+            <button onClick={() => { const supabase = getSupabaseClient(); supabase.auth.signOut(); }} className="mt-10 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700">
                 Cerrar Sesión
             </button>
         </div>
