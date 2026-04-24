@@ -13,6 +13,7 @@ import { getOptimizedImageUrl } from "@/lib/imageOptimization";
 
 // --- INICIO DEL FLUJO AVANZADO DEL CATÁLOGO ---
 export default function CatalogoPage() {
+    const supabase = getSupabaseClient();
         const [modalWarning, setModalWarning] = useState("");
     const [modalImg, setModalImg] = useState(null);
     const [addToCartModal, setAddToCartModal] = useState(null);
@@ -31,7 +32,6 @@ export default function CatalogoPage() {
         const [usuario, setUsuario] = useState(null);
     // --- Refactor: función de fetch fuera del useEffect para poder reutilizarla ---
     const fetchProductosYCategoriasYImagenes = async () => {
-        const supabase = getSupabaseClient();
         // Traer productos junto con sus variantes desde la tabla productos
         const { data: productosData, error: productosError } = await supabase
             .from('productos')
@@ -100,7 +100,6 @@ export default function CatalogoPage() {
     useEffect(() => {
         const getUser = async () => {
             try {
-                const supabase = getSupabaseClient();
                 const { data: { session } } = await supabase.auth.getSession();
                 if (session && session.user) {
                     let nombre = session.user.email;
