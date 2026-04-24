@@ -835,12 +835,11 @@ export default function NuevaVenta() {
                   pattern="[0-9]*[.,]?[0-9]*"
                   className="w-40 border border-gray-900 bg-white text-gray-900 rounded px-3 py-2 placeholder-gray-700 focus:border-gray-900 focus:ring focus:ring-gray-900/30"
                   placeholder="Monto"
-                  value={typeof pagos[idx]?.monto === 'number' && !isNaN(pagos[idx]?.monto) ? pagos[idx].monto.toString().replace('.', ',') : (pagos[idx]?.monto ?? '')}
+                  value={pagos[idx]?.monto === 0 ? '' : pagos[idx]?.monto.toString().replace('.', ',')}
                   onChange={e => {
-                    // Permitir tanto punto como coma como separador decimal
                     const raw = e.target.value.replace(',', '.');
                     const val = Number(raw);
-                    setPagos(p => p.map((pago, i) => i === idx ? { ...pago, monto: isNaN(val) ? raw : Number(val.toFixed(2)) } : pago));
+                    setPagos(p => p.map((pago, i) => i === idx ? { ...pago, monto: !raw || isNaN(val) ? 0 : val } : pago));
                   }}
                 />
                 {idx === 0 && (
