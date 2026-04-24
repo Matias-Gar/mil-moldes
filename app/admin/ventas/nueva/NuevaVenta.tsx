@@ -854,25 +854,25 @@ export default function NuevaVenta() {
                 )}
               </div>
             ))}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2">
-              <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
+              <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
                 <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Total</div>
-                <div className="text-2xl font-extrabold text-gray-900">Bs {totalCobrar.toFixed(2)}</div>
+                <div className="text-lg font-extrabold text-gray-900">Bs {totalCobrar.toFixed(2)}</div>
               </div>
-              <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+              <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
                 <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Pago recibido</div>
-                <div className="text-2xl font-extrabold text-gray-900">Bs {sumaPagos.toFixed(2)}</div>
+                <div className="text-lg font-extrabold text-gray-900">Bs {sumaPagos.toFixed(2)}</div>
               </div>
-              <div className={`rounded-xl border px-4 py-3 ${cambio > 0 ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
+              <div className={`rounded-lg border px-3 py-2 ${cambio > 0 ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
                 <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Cambio</div>
-                <div className={`text-2xl font-extrabold ${cambio > 0 ? 'text-green-700' : 'text-gray-900'}`}>Bs {Math.max(0, cambio).toFixed(2)}</div>
+                <div className={`text-lg font-extrabold ${cambio > 0 ? 'text-green-700' : 'text-gray-900'}`}>Bs {Math.max(0, cambio).toFixed(2)}</div>
               </div>
-              <div className={`rounded-xl border px-4 py-3 ${pagoInsuficiente ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-gray-50'}`}>
+              <div className={`rounded-lg border px-3 py-2 ${pagoInsuficiente ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-gray-50'}`}>
                 <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Faltante</div>
-                <div className={`text-2xl font-extrabold ${pagoInsuficiente ? 'text-red-700' : 'text-gray-900'}`}>Bs {Math.max(0, totalCobrar - sumaPagos).toFixed(2)}</div>
+                <div className={`text-lg font-extrabold ${pagoInsuficiente ? 'text-red-700' : 'text-gray-900'}`}>Bs {Math.max(0, totalCobrar - sumaPagos).toFixed(2)}</div>
               </div>
             </div>
-            <div className={`rounded-xl border px-4 py-3 mt-2 ${pagoInsuficiente ? 'border-red-300 bg-red-50 text-red-800' : cambio > 0 ? 'border-green-300 bg-green-50 text-green-800' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
+            <div className={`rounded-lg border px-3 py-2 mt-2 text-sm ${pagoInsuficiente ? 'border-red-300 bg-red-50 text-red-800' : cambio > 0 ? 'border-green-300 bg-green-50 text-green-800' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
               <span className="font-semibold">
                 {pagoInsuficiente
                   ? `Faltan Bs ${(totalCobrar - sumaPagos).toFixed(2)} para completar la venta.`
