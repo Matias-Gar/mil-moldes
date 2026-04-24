@@ -1,8 +1,9 @@
 import PacksClient from "@/components/promociones/PacksClient";
-import { supabase } from "@/lib/SupabaseClient";
+import { getSupabaseClient } from "@/lib/SupabaseClient";
 
 export default async function Page() {
   // fetch en server (no usar hooks ni window aquí)
+  const supabase = getSupabaseClient();
   const { data: packs = [], error } = await supabase
     .from("packs")
     .select("*")

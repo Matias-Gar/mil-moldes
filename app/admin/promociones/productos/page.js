@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "../../../../lib/SupabaseClient";
+import { getSupabaseClient } from "../../../../lib/SupabaseClient";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../../components/ui/card";
 import { Button } from "../../../../components/ui/button";
 import { PrecioConPromocion } from "../../../../lib/promociones";
@@ -32,6 +32,7 @@ export default function PromocionesProductosPage() {
   const fetchDatos = async () => {
     setLoading(true);
     try {
+      const supabase = getSupabaseClient();
       // Cargar productos con categorías
       const { data: productosData, error: prodError } = await supabase
         .from("productos")

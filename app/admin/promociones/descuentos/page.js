@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "../../../../lib/SupabaseClient";
+import { getSupabaseClient } from "../../../../lib/SupabaseClient";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../../components/ui/card";
 import { Button } from "../../../../components/ui/button";
 import { PrecioConPromocion } from "../../../../lib/promociones";
@@ -21,6 +21,7 @@ export default function PromocionesDescuentosPage() {
   const fetchProductosConPromociones = async () => {
     setLoading(true);
     try {
+      const supabase = getSupabaseClient();
       // Consulta para obtener productos con TODAS sus promociones (activas e inactivas)
       const { data: promocionesData, error: promoError } = await supabase
         .from("promociones")
