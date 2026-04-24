@@ -36,6 +36,18 @@ type VentaCajaPayload = {
   modo_pago?: string;
 };
 
+function parseMoneyInput(value: string) {
+  const normalized = String(value || '').replace(',', '.').trim();
+  if (!normalized) return 0;
+  const parsed = Number(normalized);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function formatMoneyInput(value: number) {
+  if (!value) return '';
+  return String(value).replace('.', ',');
+}
+
 
 export default function NuevaVenta() {
   // hooks
@@ -98,6 +110,7 @@ export default function NuevaVenta() {
   const sumaPagos = pagos.reduce((acc, p) => acc + Number(p.monto || 0), 0);
   const cambio = sumaPagos > 0 ? sumaPagos - totalCobrar : 0;
   const pagoInsuficiente = sumaPagos > 0 && sumaPagos < totalCobrar;
+  const tienePagoEnEfectivo = pagos.some((p) => p.metodo === 'efectivo' && Number(p.monto || 0) > 0);
 
   const printerRef = useRef<TicketPrinterHandle>(null);
   const efectivizarBtnRef = useRef<HTMLButtonElement>(null);
@@ -507,7 +520,7 @@ export default function NuevaVenta() {
     if (!pagos[0].metodo || pagos[0].monto <= 0) { showToast('Selecciona al menos un método de pago y monto', 'error'); return; }
     if (mostrarSegundoPago && (!pagos[1].metodo || pagos[1].monto <= 0)) { showToast('Completa el segundo método de pago y monto', 'error'); return; }
     if (sumaPagos < totalCobrar) { showToast('La suma de los pagos es insuficiente', 'error'); return; }
-    if (sumaPagos > totalCobrar + 0.01) { showToast('La suma de los pagos supera el total', 'error'); return; }
+    if (!tienePagoEnEfectivo && sumaPagos > totalCobrar + 0.01) { showToast('La suma de los pagos supera el total', 'error'); return; }
     if (cliente.requiereFactura && (!cliente.nombre.trim() || !cliente.nit.trim())) { showToast('Completa los datos de facturacion (nombre y NIT)', 'error'); return; }
 
     setEfectivizando(true);
@@ -732,7 +745,7 @@ export default function NuevaVenta() {
       showToast('Error al crear venta: ' + errorMessage, 'error');
       setEfectivizando(false);
     }
-  }, [carrito, cliente, pagos, cambio, totalCobrar, subtotal, totalDescuento, packs, setCarrito, cambiarCampo, envio, comision, publicidad, rebajas, impuestosCalculados, cobrarImpuestos]);
+  }, [carrito, cliente, pagos, cambio, totalCobrar, subtotal, totalDescuento, packs, setCarrito, cambiarCampo, envio, comision, publicidad, rebajas, impuestosCalculados, cobrarImpuestos, tienePagoEnEfectivo]);
 
   // ...continued building UI mostly replicates previous layout using components
 
@@ -764,11 +777,11 @@ export default function NuevaVenta() {
             <div className="mt-4 grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-gray-700">Envio</label>
-                <input type="number" step="0.01" min="0" value={envio} onChange={e=>setEnvio(Number(e.target.value))} className="w-full border p-2 rounded" />
+                <input type="text" inputMode="decimal" value={formatMoneyInput(envio)} onChange={e=>setEnvio(parseMoneyInput(e.target.value))} className="w-full border p-2 rounded" />
               </div>
               <div>
                 <label className="block text-gray-700">Comision</label>
-                <input type="number" step="0.01" min="0" value={comision} onChange={e=>setComision(Number(e.target.value))} className="w-full border p-2 rounded" />
+                <input type="text" inputMode="decimal" value={formatMoneyInput(comision)} onChange={e=>setComision(parseMoneyInput(e.target.value))} className="w-full border p-2 rounded" />
               </div>
               <div>
                 <label className="block text-gray-700">Impuestos</label>
@@ -776,11 +789,11 @@ export default function NuevaVenta() {
               </div>
               <div>
                 <label className="block text-gray-700">Publicidad</label>
-                <input type="number" step="0.01" min="0" value={publicidad} onChange={e=>setPublicidad(Number(e.target.value))} className="w-full border p-2 rounded" />
+                <input type="text" inputMode="decimal" value={formatMoneyInput(publicidad)} onChange={e=>setPublicidad(parseMoneyInput(e.target.value))} className="w-full border p-2 rounded" />
               </div>
               <div>
                 <label className="block text-gray-700">Rebajas</label>
-                <input type="number" step="0.01" min="0" value={rebajas} onChange={e=>setRebajas(Number(e.target.value))} className="w-full border p-2 rounded" />
+                <input type="text" inputMode="decimal" value={formatMoneyInput(rebajas)} onChange={e=>setRebajas(parseMoneyInput(e.target.value))} className="w-full border p-2 rounded" />
               </div>
             </div>
             <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-800">
@@ -840,11 +853,10 @@ export default function NuevaVenta() {
                   pattern="[0-9]*[.,]?[0-9]*"
                   className="w-40 border border-gray-900 bg-white text-gray-900 rounded px-3 py-2 placeholder-gray-700 focus:border-gray-900 focus:ring focus:ring-gray-900/30"
                   placeholder="Monto"
-                  value={pagos[idx]?.monto === 0 ? '' : pagos[idx]?.monto.toString().replace('.', ',')}
+                  value={formatMoneyInput(Number(pagos[idx]?.monto || 0))}
                   onChange={e => {
-                    const raw = e.target.value.replace(',', '.');
-                    const val = Number(raw);
-                    setPagos(p => p.map((pago, i) => i === idx ? { ...pago, monto: !raw || isNaN(val) ? 0 : val } : pago));
+                    const val = parseMoneyInput(e.target.value);
+                    setPagos(p => p.map((pago, i) => i === idx ? { ...pago, monto: val } : pago));
                   }}
                 />
                 {idx === 0 && (
