@@ -144,8 +144,8 @@ export default function NuevaVenta() {
         let productosDB = [];
         let imagenesDB: { [key: string]: string[] } = {};
         if (productosIds.length > 0) {
-          const supabase = getSupabaseClient();
-          const { data: productosData, error: productosError } = await supabase
+          const supabaseClient = getSupabaseClient();
+          const { data: productosData, error: productosError } = await supabaseClient
             .from('v_productos_catalogo')
             .select('*')
             .in('producto_id', productosIds);
@@ -153,8 +153,7 @@ export default function NuevaVenta() {
           productosDB = Array.isArray(productosData) ? productosData : [];
 
           // Traer imágenes asociadas
-          const supabase = getSupabaseClient();
-          const { data: imgs } = await supabase
+          const { data: imgs } = await supabaseClient
             .from('producto_imagenes')
             .select('producto_id, imagen_url')
             .in('producto_id', productosIds);

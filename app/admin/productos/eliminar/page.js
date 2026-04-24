@@ -59,7 +59,6 @@ function EliminarProductos(props) {
       const supabase = getSupabaseClient();
       const user = (await supabase.auth.getUser())?.data?.user;
       // Buscar el producto para obtener los datos antes de eliminar
-      const supabase = getSupabaseClient();
       const { data: prodData } = await supabase.from("productos").select("*").eq("user_id", user_id).single();
       const movimientoPayload = {
         producto_id: Number(user_id),
@@ -104,7 +103,6 @@ function EliminarProductos(props) {
     const { data: variantesAntes } = await supabase.from("producto_variantes").select("*").eq("producto_id", userIdBigInt);
     console.log("Variantes antes de borrar:", variantesAntes);
     // Eliminar variantes primero y mostrar error específico si ocurre
-    const supabase = getSupabaseClient();
     const { error: variantesError, data: variantesBorradas } = await supabase.from("producto_variantes").delete().eq("producto_id", userIdBigInt);
     console.log("Variantes borradas:", variantesBorradas, "Error:", variantesError);
     if (variantesError) {
@@ -120,7 +118,6 @@ function EliminarProductos(props) {
       }
     }
     // Finalmente, eliminar el producto
-    const supabase = getSupabaseClient();
     const { error: prodError } = await supabase.from("productos").delete().eq("user_id", user_id);
     if (prodError) {
       showToast("Error eliminando producto: " + prodError.message, "error");

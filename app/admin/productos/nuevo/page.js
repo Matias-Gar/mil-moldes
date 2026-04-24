@@ -451,7 +451,6 @@ const uploadProductImages = async (files) => {
             throw new Error(`Error al subir imagen a storage (Bucket: ${BUCKET_NAME}): ${uploadError.message}`);
         }
 
-        const supabase = getSupabaseClient();
         const { data: publicUrlData } = supabase.storage
             .from(BUCKET_NAME)
             .getPublicUrl(filePath);
@@ -1064,7 +1063,6 @@ export default function AdminProductosPage() {
                 return;
             }
             // Verificar el rol en la base de datos
-            const supabase = getSupabaseClient();
             const { data: profile, error } = await supabase
                 .from('perfiles')
                 .select('rol')
@@ -1248,7 +1246,6 @@ export default function AdminProductosPage() {
                 setImagenesProductos(agrupadas);
             }
 
-            const supabase = getSupabaseClient();
             const { data: varsData, error: varsError } = await supabase
                 .from('producto_variantes')
                 .select('id, producto_id, color, stock, precio, sku, activo')
@@ -1496,7 +1493,6 @@ export default function AdminProductosPage() {
                 }
 
                 // --- Sincronizar stock del producto como suma de variantes ---
-                const supabase = getSupabaseClient();
                 await sincronizarStockProducto(productoId, supabase);
             }
 
@@ -1596,7 +1592,6 @@ export default function AdminProductosPage() {
             if (movError) throw new Error('Error al eliminar movimientos de stock: ' + movError.message);
 
             // 2. Eliminar historial de producto relacionado
-            const supabase = getSupabaseClient();
             const { error: histError } = await supabase
                 .from('productos_historial')
                 .delete()
@@ -1604,7 +1599,6 @@ export default function AdminProductosPage() {
             if (histError) throw new Error('Error al eliminar historial: ' + histError.message);
 
             // 3. Eliminar el producto (la eliminación en cascada debería manejar imágenes y variantes)
-            const supabase = getSupabaseClient();
             const { error } = await supabase
                 .from('productos')
                 .delete()

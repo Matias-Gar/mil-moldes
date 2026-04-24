@@ -38,7 +38,6 @@ export default function InventarioEstadisticaPage() {
       const fromDate = new Date();
       fromDate.setDate(toDate.getDate() - periodDays);
 
-      const supabase = getSupabaseClient();
       const { data: ventasData } = await supabase
         .from("ventas")
         .select("id, total, fecha")
@@ -52,7 +51,6 @@ export default function InventarioEstadisticaPage() {
       const ventaIds = vData.map(v => v.id).filter(Boolean);
       let dets = [];
       if (ventaIds.length > 0) {
-        const supabase = getSupabaseClient();
         const { data: detData } = await supabase
           .from("ventas_detalle")
           .select("venta_id, producto_id, cantidad, precio_unitario")

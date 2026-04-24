@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../../../lib/SupabaseClient';
 import { useRouter } from 'next/navigation';
 
@@ -41,7 +42,7 @@ export default function PerfilLayout({ children }: { children: React.ReactNode }
 
     // Suscribirse a cambios de auth
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
+      (_event: string, session: Session | null) => {
         if (!session) {
           router.push('/login');
         } else {

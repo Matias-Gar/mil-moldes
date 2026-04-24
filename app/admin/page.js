@@ -21,7 +21,6 @@ export default function AdminDashboard() {
             }
 
             // 1. Verificar el rol en la base de datos
-            const supabase = getSupabaseClient();
             const { data: profile, error } = await supabase
                 .from('perfiles')
                 .select('rol')

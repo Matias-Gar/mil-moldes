@@ -63,7 +63,6 @@ export default function CatalogoPage() {
           return;
         }
 
-        const supabase = getSupabaseClient();
         const { data: profile, error: profileError } = await supabase
           .from("perfiles")
           .select("rol")
@@ -78,12 +77,10 @@ export default function CatalogoPage() {
 
         setUserRole("admin");
 
-        const supabase = getSupabaseClient();
         const { data: catsData } = await supabase.from("categorias").select("*");
         const categorias = Array.isArray(catsData) ? catsData : [];
         setCategoriasDisponibles(categorias.map(c => c.nombre || c.categori || `Cat-${c.id}`));
 
-        const supabase = getSupabaseClient();
         const { data: prodsData } = await supabase
           .from("productos")
           .select("user_id, nombre, descripcion, precio, stock, imagen_url, category_id, codigo_barra, categorias (categori)")

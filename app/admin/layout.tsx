@@ -2,6 +2,7 @@
 
 import Sidebar from './Sidebar';
 import { useState, useEffect } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../../lib/SupabaseClient';
 import { usePathname, useRouter } from 'next/navigation';
 import { Toast } from '../../components/ui/Toast';
@@ -57,7 +58,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
     // Suscribirse a cambios de auth
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
+      (_event: string, session: Session | null) => {
         if (!session) {
           router.push('/login');
         } else {

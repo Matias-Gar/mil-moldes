@@ -1,19 +1,5 @@
 "use client";
-// Extiende el tipo Window para incluir qz
-declare global {
-  interface Window {
-    qz?: {
-      websocket?: unknown;
-      configs?: {
-        create?: (...args: any[]) => any;
-        [key: string]: unknown;
-      };
-      print?: unknown;
-      [key: string]: unknown;
-    };
-  }
-}
-import React, { useImperativeHandle, forwardRef, useRef, useState } from 'react';
+import React, { useImperativeHandle, forwardRef, useRef } from 'react';
 import jsPDF from 'jspdf';
 import { CONFIG } from '../../lib/config';
 import { fetchStoreSettings } from '../../lib/storeSettings';
@@ -48,6 +34,7 @@ interface TicketSnapshot {
   cliente_nit?: string;
   modo_pago?: string;
   requiere_factura?: boolean;
+  cotizacion?: boolean;
   items?: TicketItem[];
   subtotal?: number;
   descuento?: number;
@@ -60,7 +47,6 @@ interface TicketSnapshot {
   total?: number;
   pago?: number;
   cambio?: number;
-  cotizacion?: boolean;
 }
 
 

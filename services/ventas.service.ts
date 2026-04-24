@@ -4,11 +4,10 @@ type GenericPayload = Record<string, unknown>;
 type ProductoId = string | number;
 type ServiceError = { message: string };
 
-// Función robusta para obtener variables de entorno obligatorias
 function getEnvVar(name: string): string {
   const value = process.env[name];
   if (!value) {
-    throw new Error(`[Supabase] La variable de entorno ${name} es obligatoria pero no está definida.`);
+    throw new Error(`[Supabase] La variable de entorno ${name} es obligatoria pero no esta definida.`);
   }
   return value;
 }
@@ -27,6 +26,7 @@ function getSupabaseClient() {
   const supabaseUrl = getEnvVar('NEXT_PUBLIC_SUPABASE_URL');
   const supabaseAnonKey = getEnvVar('NEXT_PUBLIC_SUPABASE_ANON_KEY');
   const carritoToken = getCarritoToken();
+
   return createClient(supabaseUrl, supabaseAnonKey, {
     global: {
       headers: carritoToken ? { 'carrito-token': carritoToken } : {},
@@ -36,7 +36,7 @@ function getSupabaseClient() {
 
 export async function insertarVentaPago(pago: GenericPayload) {
   const cleanPago: GenericPayload = { ...pago };
-  Object.keys(cleanPago).forEach(k => {
+  Object.keys(cleanPago).forEach((k) => {
     if (cleanPago[k] === undefined || cleanPago[k] === null) delete cleanPago[k];
   });
   const supabase = getSupabaseClient();
@@ -45,7 +45,7 @@ export async function insertarVentaPago(pago: GenericPayload) {
 
 export async function crearVenta(data: GenericPayload) {
   const payload: GenericPayload = { ...data };
-  Object.keys(payload).forEach(k => {
+  Object.keys(payload).forEach((k) => {
     if (payload[k] === undefined) delete payload[k];
   });
   const supabase = getSupabaseClient();
@@ -54,7 +54,7 @@ export async function crearVenta(data: GenericPayload) {
 
 export async function insertarVentaDetalle(item: GenericPayload) {
   const cleanItem: GenericPayload = { ...item };
-  Object.keys(cleanItem).forEach(k => {
+  Object.keys(cleanItem).forEach((k) => {
     if (cleanItem[k] === undefined || cleanItem[k] === null) delete cleanItem[k];
   });
   const supabase = getSupabaseClient();
@@ -66,7 +66,6 @@ export async function descontarStock(pid: ProductoId, cantidad: number) {
   const rpcResult = await supabase.rpc('descontar_stock', { pid, cantidad_desc: cantidad });
   if (!rpcResult.error) return rpcResult;
 
-  // Fallback defensivo cuando la RPC no existe o tiene firma ambigua.
   const { data: product, error: fetchError } = await supabase
     .from('productos')
     .select('stock')

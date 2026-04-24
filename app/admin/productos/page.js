@@ -123,7 +123,6 @@ const uploadProductImages = async (files) => {
         if (uploadError) {
             throw new Error(`Error al subir imagen a storage (Bucket: ${BUCKET_NAME}): ${uploadError.message}`);
         }
-        const supabase = getSupabaseClient();
         const { data: publicUrlData } = supabase.storage
             .from(BUCKET_NAME)
             .getPublicUrl(filePath);
@@ -315,7 +314,6 @@ export default function AdminProductosPage() {
                 return;
             }
             // Verificar el rol en la base de datos
-            const supabase = getSupabaseClient();
             const { data: profile, error } = await supabase
                 .from('perfiles')
                 .select('rol')

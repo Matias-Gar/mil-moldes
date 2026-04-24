@@ -299,7 +299,6 @@ export default function StockPage() {
       return enrichedResult.data || [];
     }
 
-    const supabase = getSupabaseClient();
     const fallbackResult = await supabase.from("productos").select(`
       user_id,
       nombre,

@@ -1,17 +1,17 @@
 declare module 'qrcode' {
-  export function toCanvas(canvas: HTMLCanvasElement, text: string, opts?: { width: number }): Promise<void>;
-}
+  export type QRCodeCanvasOptions = {
+    width?: number;
+  };
 
-declare global {
-  interface Window {
-    __COSTOS_EXTRA__?: {
-      envio?: number;
-      comision?: number;
-      publicidad?: number;
-      rebajas?: number;
-      impuestos?: number;
-    };
-  }
-}
+  export function toCanvas(
+    canvas: HTMLCanvasElement,
+    text: string,
+    opts?: QRCodeCanvasOptions
+  ): Promise<void>;
 
-export {};
+  const qrCode: {
+    toCanvas: typeof toCanvas;
+  };
+
+  export default qrCode;
+}

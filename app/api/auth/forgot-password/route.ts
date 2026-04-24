@@ -1,6 +1,6 @@
 "use server";
 import { NextResponse } from 'next/server';
-import { supabaseAdmin as supabase } from '../../../../lib/SupabaseAdminClient';
+import { getSupabaseAdminClient } from '../../../../lib/SupabaseAdminClient';
 
 function generarCodigo(longitud = 6) {
   return Math.random().toString().slice(2, 2 + longitud);
@@ -8,6 +8,7 @@ function generarCodigo(longitud = 6) {
 
 export async function POST(req: Request) {
   try {
+    const supabase = getSupabaseAdminClient();
     const { email, ci, newPassword } = await req.json();
     // console.log('[FORGOT] Email recibido:', email, 'CI:', ci);
     if (!email) {

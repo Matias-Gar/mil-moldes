@@ -28,21 +28,18 @@ export default function EditarCatalogo() {
           if (productosError) throw productosError;
 
           // Imágenes
-          const supabase = getSupabaseClient();
           const { data: imagenesData, error: imagenesError } = await supabase
             .from("producto_imagenes")
             .select("id, producto_id, imagen_url");
           if (imagenesError) throw imagenesError;
 
           // Variantes
-          const supabase = getSupabaseClient();
           const { data: variantesData, error: variantesError } = await supabase
             .from("producto_variantes")
             .select("*");
           if (variantesError) throw variantesError;
 
           // Categorías
-          const supabase = getSupabaseClient();
           const { data: categoriesData, error: categoriesError } = await supabase
             .from("categorias")
             .select("id, categori");
@@ -290,7 +287,6 @@ export default function EditarCatalogo() {
 
       // 2. Sincronizar variantes
       // Obtener variantes actuales en BD
-      const supabase = getSupabaseClient();
       const { data: variantesBD } = await supabase
         .from("producto_variantes")
         .select("id, producto_id, color, talla, stock, sku, precio, imagen_url, activo").eq("producto_id", productoActual.user_id);
@@ -341,7 +337,6 @@ export default function EditarCatalogo() {
 
       // 3. Sincronizar imágenes
       // Obtener imágenes actuales en BD
-      const supabase = getSupabaseClient();
       const { data: imagenesBD } = await supabase
         .from("producto_imagenes")
         .select("id, producto_id, imagen_url").eq("producto_id", productoActual.user_id);
@@ -366,7 +361,6 @@ export default function EditarCatalogo() {
       showToast("Producto actualizado con éxito!");
 
       // Refrescar variantes desde la base de datos para reflejar el cambio en la UI
-      const supabase = getSupabaseClient();
       const { data: variantesActualizadas, error: variantesRefreshError } = await supabase
         .from("producto_variantes")
         .select("*")
