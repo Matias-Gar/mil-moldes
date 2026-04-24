@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 // USAR ALIAS DE RAIZ (ahora que tsconfig.json está listo)
-import { supabase } from '@/lib/SupabaseClient'; 
+import { getSupabaseClient } from '@/lib/SupabaseClient'; 
 import AuthForm from '@/components/AuthForm'; 
 // ...
 export default function LoginPage() {
@@ -12,14 +12,15 @@ export default function LoginPage() {
     const [isLoading, setIsLoading] = useState(true);
 
     // Función unificada para verificar rol y redirigir
-    const checkRoleAndRedirect = useCallback(async (userId) => {
-        setIsLoading(true);
-        try {
-            const { data: profile, error: profileError } = await supabase
-            .from('perfiles')
-            .select('rol')
-            .eq('id', userId)
-            .single();
+        const checkRoleAndRedirect = useCallback(async (userId) => {
+            setIsLoading(true);
+            try {
+                const supabase = getSupabaseClient();
+                const { data: profile, error: profileError } = await supabase
+                    .from('perfiles')
+                    .select('rol')
+                    .eq('id', userId)
+                    .single();
 
             if (profileError) {
     // console.error("Error al obtener el perfil:", profileError.message);
@@ -42,9 +43,10 @@ export default function LoginPage() {
     }, [router]);
 
     useEffect(() => {
-        const checkSession = async () => {
-            // Supabase.auth.getSession() no requiere try/catch
-            const { data: { session } } = await supabase.auth.getSession();
+            const checkSession = async () => {
+                const supabase = getSupabaseClient();
+                // Supabase.auth.getSession() no requiere try/catch
+                const { data: { session } } = await supabase.auth.getSession();
 
             if (session) {
                 // Si ya hay sesión, intentar redirigir
@@ -58,7 +60,8 @@ export default function LoginPage() {
         checkSession();
 
         // Escuchar cambios de autenticación (login/logout)
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const supabase = getSupabaseClient();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
              if (event === 'SIGNED_IN' && session) {
                  checkRoleAndRedirect(session.user.id);
              } else if (event === 'SIGNED_OUT') {

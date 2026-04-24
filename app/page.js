@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../lib/SupabaseClient';
+import { getSupabaseClient } from '../lib/SupabaseClient';
 import { PrecioConPromocion } from '../lib/promociones';
 import { usePromociones } from '../lib/usePromociones';
 import { usePacks, calcularDescuentoPack } from '../lib/packs';
@@ -120,7 +120,7 @@ export default function Home() {
   const { packs, loading: loadingPacks } = usePacks();
 
   const fetchCategorias = async () => {
-    if (!supabase) return;
+    const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from('categorias')
       .select('id, categori')
@@ -132,6 +132,7 @@ export default function Home() {
     setLoading(true);
     setError(null);
     try {
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from('v_productos_catalogo')
         .select('producto_id, nombre, descripcion, precio_base, imagen_base, category_id, categoria, stock_total, codigo_barra, variantes');
@@ -185,21 +186,20 @@ export default function Home() {
     fetchCategorias();
     fetchProductos();
     
-    if (supabase) {
-      const channel = supabase
-        .channel('productos-public-channel')
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'productos' },
-          (_payload) => {
-            fetchProductos();
-          }
-        )
-        .subscribe();
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    }
+    const supabase = getSupabaseClient();
+    const channel = supabase
+      .channel('productos-public-channel')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'productos' },
+        (_payload) => {
+          fetchProductos();
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
 
