@@ -838,7 +838,7 @@ export default function NuevaVenta() {
                   value={typeof pagos[idx]?.monto === 'number' && !isNaN(pagos[idx]?.monto) ? pagos[idx].monto.toFixed(2) : (pagos[idx]?.monto ?? '')}
                   onChange={e => {
                     const val = Number(e.target.value);
-                    setPagos(p => p.map((pago, i) => i === idx ? { ...pago, monto: isNaN(val) ? '' : Number(val.toFixed(2)) } : pago));
+                    setPagos(p => p.map((pago, i) => i === idx ? { ...pago, monto: isNaN(val) ? 0 : Number(val.toFixed(2)) } : pago));
                   }}
                 />
                 {idx === 0 && (
