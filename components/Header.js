@@ -6,6 +6,7 @@ import { DEFAULT_STORE_SETTINGS, fetchStoreSettings } from '../lib/storeSettings
 import { getDefaultAdminRoute, isAdminPanelRole } from '../lib/adminPermissions';
 
 export default function Header() {
+  const supabase = getSupabaseClient();
   const [session, setSession] = useState(null);
   const [userRole, setUserRole] = useState(null); // Nuevo estado para el rol
   const [storeSettings, setStoreSettings] = useState(DEFAULT_STORE_SETTINGS);

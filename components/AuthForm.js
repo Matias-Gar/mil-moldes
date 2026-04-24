@@ -4,6 +4,7 @@ import RecuperarContrasenaForm from './RecuperarContrasenaForm';
 import { getSupabaseClient } from "../lib/SupabaseClient";
 
 export default function AuthForm({ onLoginSuccess }) {
+  const supabase = getSupabaseClient();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);

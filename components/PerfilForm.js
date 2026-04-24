@@ -4,6 +4,7 @@ import Image from 'next/image';
 import { getSupabaseClient } from "../lib/SupabaseClient";
 
 export default function PerfilForm({ userId, perfilActual, onSave, isAdminEdit = false }) {
+  const supabase = getSupabaseClient();
   const [nombre, setNombre] = useState("");
   const [nitCi, setNitCi] = useState("");
   const [telefono, setTelefono] = useState("");
