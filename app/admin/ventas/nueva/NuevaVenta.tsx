@@ -830,15 +830,17 @@ export default function NuevaVenta() {
                   </button>
                 ))}
                 <input
-                  type="number"
-                  min={0}
-                  step={0.01}
+                  type="text"
+                  inputMode="decimal"
+                  pattern="[0-9]*[.,]?[0-9]*"
                   className="w-40 border border-gray-900 bg-white text-gray-900 rounded px-3 py-2 placeholder-gray-700 focus:border-gray-900 focus:ring focus:ring-gray-900/30"
                   placeholder="Monto"
-                  value={typeof pagos[idx]?.monto === 'number' && !isNaN(pagos[idx]?.monto) ? pagos[idx].monto.toFixed(2) : (pagos[idx]?.monto ?? '')}
+                  value={typeof pagos[idx]?.monto === 'number' && !isNaN(pagos[idx]?.monto) ? pagos[idx].monto.toString().replace('.', ',') : (pagos[idx]?.monto ?? '')}
                   onChange={e => {
-                    const val = Number(e.target.value);
-                    setPagos(p => p.map((pago, i) => i === idx ? { ...pago, monto: isNaN(val) ? 0 : Number(val.toFixed(2)) } : pago));
+                    // Permitir tanto punto como coma como separador decimal
+                    const raw = e.target.value.replace(',', '.');
+                    const val = Number(raw);
+                    setPagos(p => p.map((pago, i) => i === idx ? { ...pago, monto: isNaN(val) ? raw : Number(val.toFixed(2)) } : pago));
                   }}
                 />
                 {idx === 0 && (
