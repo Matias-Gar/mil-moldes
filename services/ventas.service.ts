@@ -11,7 +11,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 // Token anónimo persistente para identificar el carrito
-let carritoToken = null;
+let carritoToken: string | null = null;
 if (typeof window !== 'undefined') {
   carritoToken = localStorage.getItem('carrito_token');
   if (!carritoToken) {
