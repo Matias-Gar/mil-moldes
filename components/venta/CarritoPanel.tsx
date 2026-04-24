@@ -14,13 +14,18 @@ interface Props {
   subtotal: number;
   totalDescuento: number;
   total: number;
+  envio: number;
+  comision: number;
+  publicidad: number;
+  rebajas: number;
+  impuestos: number;
+  totalCobrar: number;
   modoPago: string;
   pago: number;
   cambio: number;
   packs: Pack[];
   promociones: any[];
 }
-
 
 export default function CarritoPanel({
   carrito,
@@ -30,6 +35,12 @@ export default function CarritoPanel({
   subtotal,
   totalDescuento,
   total,
+  envio,
+  comision,
+  publicidad,
+  rebajas,
+  impuestos,
+  totalCobrar,
   packs,
   promociones
 }: Props) {
@@ -52,7 +63,7 @@ export default function CarritoPanel({
               </tr>
             </thead>
             <tbody>
-              {carrito.map(item => {
+              {carrito.map((item) => {
                 if (item.tipo === 'pack') {
                   const pack = item.pack_data || packs.find((p) => p.id === item.pack_id);
                   if (!pack) return null;
@@ -62,14 +73,14 @@ export default function CarritoPanel({
                     <tr key={packKey} className="bg-purple-50 border-2 border-purple-200">
                       <td className="p-2 text-center align-middle">
                         <div className="h-14 w-14 mx-auto bg-purple-100 rounded-lg border-2 border-purple-300 flex items-center justify-center shadow-sm">
-                          <span className="text-2xl">📦</span>
+                          <span className="text-2xl">ðŸ“¦</span>
                         </div>
                       </td>
                       <td className="p-2 text-left font-bold text-gray-900">
-                        <div className="font-bold text-purple-800">📦 {pack.nombre}</div>
+                        <div className="font-bold text-purple-800">ðŸ“¦ {pack.nombre}</div>
                         <div className="text-xs text-purple-600">{pack.descripcion || 'Pack especial'}</div>
                         <div className="text-xs text-gray-600 mt-1">
-                          Incluye: {pack.pack_productos?.map((packItem: PackProduct) => 
+                          Incluye: {pack.pack_productos?.map((packItem: PackProduct) =>
                             `${packItem.cantidad}x ${packItem.productos.nombre}`
                           ).join(', ') || 'Productos del pack'}
                         </div>
@@ -79,7 +90,7 @@ export default function CarritoPanel({
                           type="number"
                           min={1}
                           value={item.cantidad}
-                          onChange={e => cambiarCantidad(packKey, Number(e.target.value))}
+                          onChange={(e) => cambiarCantidad(packKey, Number(e.target.value))}
                           className="w-16 border border-gray-900 rounded px-2 py-1 text-gray-900"
                         />
                       </td>
@@ -104,17 +115,18 @@ export default function CarritoPanel({
                     </tr>
                   );
                 }
+
                 const precioInfo = calcularPrecioConPromocion(item, promociones);
                 const itemKey = item.cart_key || `prod:${String(item.user_id)}:${String(item.variante_id ?? 'default')}`;
-                // Lógica para imagen: variante > item.imagen_url > imagenes[1] > imagenes[0]
                 let imagenUrl = null;
                 if (item.variante_id && item.variantes) {
-                  const variante = item.variantes.find(v => String(v.id || v.variante_id) === String(item.variante_id));
+                  const variante = item.variantes.find((v) => String(v.id || v.variante_id) === String(item.variante_id));
                   if (variante && variante.imagen_url) imagenUrl = variante.imagen_url;
                 }
                 if (!imagenUrl && item.imagen_url) imagenUrl = item.imagen_url;
                 if (!imagenUrl && imagenes[String(item.user_id)]?.[1]) imagenUrl = imagenes[String(item.user_id)][1];
                 if (!imagenUrl && imagenes[String(item.user_id)]?.[0]) imagenUrl = imagenes[String(item.user_id)][0];
+
                 return (
                   <tr key={itemKey}>
                     <td className="p-2 text-center align-middle">
@@ -143,13 +155,13 @@ export default function CarritoPanel({
                         min={1}
                         max={Number.isFinite(Number(item.stock)) ? Math.max(1, Number(item.stock)) : undefined}
                         value={item.cantidad}
-                        onChange={e => cambiarCantidad(itemKey, Number(e.target.value))}
+                        onChange={(e) => cambiarCantidad(itemKey, Number(e.target.value))}
                         className="w-16 border border-gray-900 rounded px-2 py-1 text-gray-900"
                       />
                     </td>
                     <td className="p-2">
-                      <PrecioConPromocion 
-                        producto={item} 
+                      <PrecioConPromocion
+                        producto={item}
                         promociones={promociones}
                         compact={true}
                         className="text-gray-900 font-bold"
@@ -158,7 +170,7 @@ export default function CarritoPanel({
                     <td className="p-2">
                       {precioInfo.tienePromocion ? (
                         <div className="text-center">
-                          <div className="text-red-600 font-bold">-Bs {((precioInfo?.descuento||0) * item.cantidad).toFixed(2)}</div>
+                          <div className="text-red-600 font-bold">-Bs {((precioInfo?.descuento || 0) * item.cantidad).toFixed(2)}</div>
                           <div className="text-red-600 text-sm">-{precioInfo.porcentajeDescuento}%</div>
                         </div>
                       ) : (
@@ -169,8 +181,8 @@ export default function CarritoPanel({
                       Bs {(precioInfo.precioFinal * item.cantidad).toFixed(2)}
                     </td>
                     <td className="p-2">
-                      <button 
-                        onClick={() => quitar(itemKey)} 
+                      <button
+                        onClick={() => quitar(itemKey)}
                         className="bg-red-700 hover:bg-red-800 text-white px-3 py-1 rounded font-bold"
                       >
                         Quitar
@@ -181,31 +193,15 @@ export default function CarritoPanel({
               })}
             </tbody>
           </table>
-          {/* Resumen de totales y costos extra */}
           <div className="text-right mt-4 text-xl font-bold text-gray-900">
-            {(() => {
-              let envio = 0, comision = 0, publicidad = 0, rebajas = 0, impuestos = 0;
-              if (typeof window !== 'undefined' && window.__COSTOS_EXTRA__) {
-                envio = Number(window.__COSTOS_EXTRA__.envio) || 0;
-                comision = Number(window.__COSTOS_EXTRA__.comision) || 0;
-                publicidad = Number(window.__COSTOS_EXTRA__.publicidad) || 0;
-                rebajas = Number(window.__COSTOS_EXTRA__.rebajas) || 0;
-                impuestos = Number(window.__COSTOS_EXTRA__.impuestos) || 0;
-              }
-              const totalACobrar = subtotal - totalDescuento + envio + comision + impuestos - publicidad - rebajas;
-              return (
-                <>
-                  <div>Subtotal: Bs {subtotal.toFixed(2)}</div>
-                  {totalDescuento > 0 && <div className="text-green-700">Descuentos: -Bs {totalDescuento.toFixed(2)}</div>}
-                  {envio > 0 && <div className="text-blue-700">Envío: +Bs {envio.toFixed(2)}</div>}
-                  {comision > 0 && <div className="text-blue-700">Comisión: +Bs {comision.toFixed(2)}</div>}
-                  {publicidad > 0 && <div className="text-blue-700">Publicidad: -Bs {publicidad.toFixed(2)}</div>}
-                  {rebajas > 0 && <div className="text-blue-700">Rebajas: -Bs {rebajas.toFixed(2)}</div>}
-                  {impuestos > 0 && <div className="text-amber-700">IVA+IT (16%): +Bs {impuestos.toFixed(2)}</div>}
-                  <div className="text-2xl">Total a cobrar: Bs {totalACobrar.toFixed(2)}</div>
-                </>
-              );
-            })()}
+            <div>Subtotal: Bs {subtotal.toFixed(2)}</div>
+            {totalDescuento > 0 && <div className="text-green-700">Descuentos: -Bs {totalDescuento.toFixed(2)}</div>}
+            {envio > 0 && <div className="text-blue-700">Envío: +Bs {envio.toFixed(2)}</div>}
+            {comision > 0 && <div className="text-blue-700">Comisión: +Bs {comision.toFixed(2)}</div>}
+            {publicidad > 0 && <div className="text-blue-700">Publicidad: -Bs {publicidad.toFixed(2)}</div>}
+            {rebajas > 0 && <div className="text-blue-700">Rebajas: -Bs {rebajas.toFixed(2)}</div>}
+            {impuestos > 0 && <div className="text-amber-700">IVA+IT (16%): +Bs {impuestos.toFixed(2)}</div>}
+            <div className="text-2xl">Total a cobrar: Bs {totalCobrar.toFixed(2)}</div>
           </div>
           {!carrito.length && null}
         </div>

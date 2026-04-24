@@ -749,16 +749,6 @@ export default function NuevaVenta() {
 
   // ...continued building UI mostly replicates previous layout using components
 
-  // Pasar costos extra al window para que CarritoPanel los pueda mostrar
-  if (typeof window !== 'undefined') {
-    window.__COSTOS_EXTRA__ = {
-      envio,
-      comision,
-      publicidad,
-      rebajas,
-      impuestos: Number(impuestosCalculados.toFixed(2))
-    };
-  }
   return (
     <div className="min-h-screen w-full flex flex-col items-center justify-start py-8 px-2 bg-gradient-to-br from-gray-100 to-gray-300">
       <h1 className="text-3xl font-extrabold mb-8 text-gray-900 w-full text-center">Nueva Venta</h1>
@@ -922,6 +912,12 @@ export default function NuevaVenta() {
             subtotal={subtotal}
             totalDescuento={totalDescuento}
             total={total}
+            envio={envio}
+            comision={comision}
+            publicidad={publicidad}
+            rebajas={rebajas}
+            impuestos={Number(impuestosCalculados.toFixed(2))}
+            totalCobrar={totalCobrar}
             modoPago={pagos.map(p=>p.metodo).join(' + ')}
             pago={sumaPagos}
             cambio={cambio}
