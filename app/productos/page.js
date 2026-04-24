@@ -5,7 +5,7 @@ import React, { useState, useEffect } from "react";
 import Image from "next/image";
 import { usePromociones } from "@/lib/usePromociones";
 import { usePacks, calcularDescuentoPack } from "@/lib/packs";
-import { supabase } from "@/lib/SupabaseClient";
+import { getSupabaseClient } from "@/lib/SupabaseClient";
 import { DEFAULT_STORE_SETTINGS, fetchStoreSettings } from "@/lib/storeSettings";
 import { PrecioConPromocion } from "@/lib/promociones";
 import { getOptimizedImageUrl } from "@/lib/imageOptimization";
@@ -31,6 +31,7 @@ export default function CatalogoPage() {
         const [usuario, setUsuario] = useState(null);
     // --- Refactor: función de fetch fuera del useEffect para poder reutilizarla ---
     const fetchProductosYCategoriasYImagenes = async () => {
+        const supabase = getSupabaseClient();
         // Traer productos junto con sus variantes desde la tabla productos
         const { data: productosData, error: productosError } = await supabase
             .from('productos')
@@ -99,6 +100,7 @@ export default function CatalogoPage() {
     useEffect(() => {
         const getUser = async () => {
             try {
+                const supabase = getSupabaseClient();
                 const { data: { session } } = await supabase.auth.getSession();
                 if (session && session.user) {
                     let nombre = session.user.email;
