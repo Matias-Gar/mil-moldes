@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { supabase } from "../../../../lib/SupabaseClient";
+import { getSupabaseClient } from "../../../../lib/SupabaseClient";
 import dynamic from "next/dynamic";
 
 const Pie = dynamic(() => import("react-chartjs-2").then(mod => mod.Pie), { ssr: false });
@@ -17,7 +17,7 @@ export default function VentasEstadisticaPage() {
 
   useEffect(() => {
     async function fetchVentas() {
-
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from("ventas")
         .select("id, total, fecha, costos_extra, descuentos, cliente_nombre, modo_pago");

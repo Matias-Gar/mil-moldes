@@ -2,7 +2,7 @@
 
 
 import { useEffect, useState, useRef } from "react";
-import { supabase } from "../../../../lib/SupabaseClient";
+import { getSupabaseClient } from "../../../../lib/SupabaseClient";
 
 export default function AuditoriaStockPage() {
   const [productos, setProductos] = useState([]);
@@ -108,6 +108,7 @@ export default function AuditoriaStockPage() {
   useEffect(() => {
     async function fetchData() {
       setLoading(true);
+      const supabase = getSupabaseClient();
       // Traer productos con stock_inicial
       const { data: prods } = await supabase.from("productos").select("user_id, nombre, stock, stock_inicial");
       // Traer ventas detalle (incluyendo usuario_email)
@@ -132,10 +133,12 @@ export default function AuditoriaStockPage() {
       return;
     }
     async function fetchMovimientos() {
+      const supabase = getSupabaseClient();
       const { data } = await supabase.from("stock_movimientos").select("id, tipo, cantidad, usuario_email, observaciones, created_at, producto_id").eq("producto_id", selected.user_id).order("created_at", { ascending: false });
       setMovimientos(data || []);
     }
     async function fetchHistorial() {
+      const supabase = getSupabaseClient();
       const { data } = await supabase.from("productos_historial").select("id, accion, datos_anteriores, datos_nuevos, usuario_email, fecha, producto_id").eq("producto_id", selected.user_id).order("fecha", { ascending: false });
       setHistorial(data || []);
     }
