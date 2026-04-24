@@ -1,37 +1,11 @@
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseClient } from '../lib/SupabaseClient';
 
 type GenericPayload = Record<string, unknown>;
 type ProductoId = string | number;
 type ServiceError = { message: string };
 
-function getEnvVar(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`[Supabase] La variable de entorno ${name} es obligatoria pero no esta definida.`);
-  }
-  return value;
-}
-
-function getCarritoToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  let carritoToken = localStorage.getItem('carrito_token');
-  if (!carritoToken) {
-    carritoToken = crypto.randomUUID();
-    localStorage.setItem('carrito_token', carritoToken);
-  }
-  return carritoToken;
-}
-
-function getSupabaseClient() {
-  const supabaseUrl = getEnvVar('NEXT_PUBLIC_SUPABASE_URL');
-  const supabaseAnonKey = getEnvVar('NEXT_PUBLIC_SUPABASE_ANON_KEY');
-  const carritoToken = getCarritoToken();
-
-  return createClient(supabaseUrl, supabaseAnonKey, {
-    global: {
-      headers: carritoToken ? { 'carrito-token': carritoToken } : {},
-    },
-  });
+function getVentasSupabaseClient() {
+  return getSupabaseClient();
 }
 
 export async function insertarVentaPago(pago: GenericPayload) {
@@ -39,7 +13,7 @@ export async function insertarVentaPago(pago: GenericPayload) {
   Object.keys(cleanPago).forEach((k) => {
     if (cleanPago[k] === undefined || cleanPago[k] === null) delete cleanPago[k];
   });
-  const supabase = getSupabaseClient();
+  const supabase = getVentasSupabaseClient();
   return supabase.from('ventas_pagos').insert([cleanPago]);
 }
 
@@ -48,7 +22,7 @@ export async function crearVenta(data: GenericPayload) {
   Object.keys(payload).forEach((k) => {
     if (payload[k] === undefined) delete payload[k];
   });
-  const supabase = getSupabaseClient();
+  const supabase = getVentasSupabaseClient();
   return supabase.from('ventas').insert([payload]).select().single();
 }
 
@@ -57,12 +31,12 @@ export async function insertarVentaDetalle(item: GenericPayload) {
   Object.keys(cleanItem).forEach((k) => {
     if (cleanItem[k] === undefined || cleanItem[k] === null) delete cleanItem[k];
   });
-  const supabase = getSupabaseClient();
+  const supabase = getVentasSupabaseClient();
   return supabase.from('ventas_detalle').insert([cleanItem]);
 }
 
 export async function descontarStock(pid: ProductoId, cantidad: number) {
-  const supabase = getSupabaseClient();
+  const supabase = getVentasSupabaseClient();
   const rpcResult = await supabase.rpc('descontar_stock', { pid, cantidad_desc: cantidad });
   if (!rpcResult.error) return rpcResult;
 
@@ -87,14 +61,12 @@ export async function descontarStock(pid: ProductoId, cantidad: number) {
 }
 
 export async function guardarCarritoPendiente(payload: GenericPayload) {
-  const carritoToken = getCarritoToken();
-  const supabase = getSupabaseClient();
-  const finalPayload = { ...payload, carrito_token: carritoToken };
-  return supabase.from('carritos_pendientes').insert([finalPayload]);
+  const supabase = getVentasSupabaseClient();
+  return supabase.from('carritos_pendientes').insert([payload]);
 }
 
 export async function fetchCarritosPendientes() {
-  const supabase = getSupabaseClient();
+  const supabase = getVentasSupabaseClient();
   return supabase
     .from('carritos_pendientes')
     .select('id, cliente_nombre, cliente_telefono, productos, fecha')
@@ -102,6 +74,6 @@ export async function fetchCarritosPendientes() {
 }
 
 export async function eliminarCarritoPendiente(id: ProductoId) {
-  const supabase = getSupabaseClient();
+  const supabase = getVentasSupabaseClient();
   return supabase.from('carritos_pendientes').delete().eq('id', id);
 }
