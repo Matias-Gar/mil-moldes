@@ -6,9 +6,20 @@ export async function insertarVentaPago(pago: GenericPayload) {
   });
   return supabase.from('ventas_pagos').insert([cleanPago]);
 }
+
 import { createClient } from '@supabase/supabase-js';
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+// Función robusta para obtener variables de entorno obligatorias
+function getEnvVar(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`[Supabase] La variable de entorno ${name} es obligatoria pero no está definida.`);
+  }
+  return value;
+}
+
+const supabaseUrl = getEnvVar('NEXT_PUBLIC_SUPABASE_URL');
+const supabaseAnonKey = getEnvVar('NEXT_PUBLIC_SUPABASE_ANON_KEY');
 
 // Token anónimo persistente para identificar el carrito
 let carritoToken: string | null = null;
