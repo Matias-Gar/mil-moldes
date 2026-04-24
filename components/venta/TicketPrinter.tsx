@@ -60,6 +60,7 @@ interface TicketSnapshot {
   total?: number;
   pago?: number;
   cambio?: number;
+  cotizacion?: boolean;
 }
 
 
