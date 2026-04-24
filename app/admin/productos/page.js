@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { useEffect, useState, useRef } from 'react';
-import { supabase } from "../../../lib/SupabaseClient";
+import { getSupabaseClient } from "../../../lib/SupabaseClient";
 import { useRouter } from "next/navigation";
 import { v4 as uuidv4 } from 'uuid';
 import { PrecioConPromocion } from '../../../lib/promociones';
@@ -113,6 +113,7 @@ const uploadProductImages = async (files) => {
         const fileExtension = preparedFile.name.split('.').pop();
         const fileName = `${uuidv4()}.${fileExtension}`;
         const filePath = `${userId}/${fileName}`;
+        const supabase = getSupabaseClient();
         const { error: uploadError } = await supabase.storage
             .from(BUCKET_NAME)
             .upload(filePath, preparedFile, {
@@ -122,6 +123,7 @@ const uploadProductImages = async (files) => {
         if (uploadError) {
             throw new Error(`Error al subir imagen a storage (Bucket: ${BUCKET_NAME}): ${uploadError.message}`);
         }
+        const supabase = getSupabaseClient();
         const { data: publicUrlData } = supabase.storage
             .from(BUCKET_NAME)
             .getPublicUrl(filePath);
@@ -305,6 +307,7 @@ export default function AdminProductosPage() {
     // useEffect de autenticación y rol
     useEffect(() => {
         const checkAuthAndRole = async () => {
+            const supabase = getSupabaseClient();
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) {
                 router.push('/login');
@@ -312,6 +315,7 @@ export default function AdminProductosPage() {
                 return;
             }
             // Verificar el rol en la base de datos
+            const supabase = getSupabaseClient();
             const { data: profile, error } = await supabase
                 .from('perfiles')
                 .select('rol')
@@ -391,6 +395,7 @@ export default function AdminProductosPage() {
 
     // Función para cargar categorías 
     const fetchCategories = async () => {
+        const supabase = getSupabaseClient();
         const { data, error } = await supabase
             .from('categorias')
             .select('id, categori')
@@ -410,6 +415,7 @@ export default function AdminProductosPage() {
         }
         setLoading(true);
         // 1. Traer productos
+        const supabase = getSupabaseClient();
         const { data, error } = await supabase
             .from('productos')
             .select(`
@@ -441,6 +447,7 @@ export default function AdminProductosPage() {
         // 2. Traer imágenes de todos los productos
         const ids = formattedData.map(p => p.user_id);
         if (ids.length > 0) {
+            const supabase = getSupabaseClient();
             const { data: imgs, error: imgsError } = await supabase
                 .from('producto_imagenes')
                 .select('producto_id, imagen_url')
@@ -469,6 +476,7 @@ export default function AdminProductosPage() {
         }
         
         // Listener de tiempo real
+        const supabase = getSupabaseClient();
         const channel = supabase
             .channel('productos-channel')
             .on(
@@ -480,6 +488,7 @@ export default function AdminProductosPage() {
             )
             .subscribe();
         return () => {
+            const supabase = getSupabaseClient();
             supabase.removeChannel(channel);
         };
     }, [userRole]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -501,6 +510,7 @@ export default function AdminProductosPage() {
             const codigoBarra = newProduct.codigo_barra || generateBarcode();
 
             // Usamos .select() para obtener el producto insertado y su user_id
+            const supabase = getSupabaseClient();
             const { data: productoInsertado, error: insertError } = await supabase
                 .from('productos')
                 .insert([
@@ -522,6 +532,7 @@ export default function AdminProductosPage() {
             if (productoInsertado && productoInsertado.length > 0 && imagenUrls.length > 0) {
                 const productoId = productoInsertado[0].user_id;
                 const imagesToInsert = imagenUrls.map(url => ({ producto_id: productoId, imagen_url: url }));
+                const supabase = getSupabaseClient();
                 const { error: imgInsertError } = await supabase.from('producto_imagenes').insert(imagesToInsert);
                 if (imgInsertError) {
                     // Nota: Idealmente, aquí también se debería intentar borrar los archivos subidos al storage.
@@ -558,6 +569,7 @@ export default function AdminProductosPage() {
 
         try { 
             // La eliminación en cascada debería manejar las imágenes relacionadas
+            const supabase = getSupabaseClient();
             const { error } = await supabase 
                 .from('productos') 
                 .delete() 
@@ -593,6 +605,7 @@ export default function AdminProductosPage() {
             
             // 2. Actualizar producto (sin tocar imagen_url principal)
             const categoryIdValue = editingProduct.category_id ? parseInt(editingProduct.category_id) : null;
+            const supabase = getSupabaseClient();
             const { error: updateError } = await supabase
                 .from('productos')
                 .update({
@@ -617,6 +630,7 @@ export default function AdminProductosPage() {
 
             if (urlsAEliminar.length > 0) {
                 // Eliminamos las referencias de la tabla producto_imagenes
+                const supabase = getSupabaseClient();
                 const { error: deleteImgError } = await supabase.from('producto_imagenes')
                     .delete()
                     .in('imagen_url', urlsAEliminar)
@@ -632,6 +646,7 @@ export default function AdminProductosPage() {
             // 4. Insertar nuevas imágenes
             if (nuevasUrls.length > 0) {
                 const imagesToInsert = nuevasUrls.map(url => ({ producto_id: editingProduct.user_id, imagen_url: url }));
+                const supabase = getSupabaseClient();
                 const { error: imgInsertError } = await supabase.from('producto_imagenes').insert(imagesToInsert);
                 if (imgInsertError) {
                     throw new Error(imgInsertError.message);
