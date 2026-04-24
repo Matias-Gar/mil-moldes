@@ -85,7 +85,7 @@ interface TicketPrinterProps {
 }
 
 export interface TicketPrinterHandle {
-  printComprobante: () => Promise<void>;
+  printComprobante: (opts?: { cotizacion?: boolean }) => Promise<void>;
 }
 
 function limpiarTexto(texto?: string) {
