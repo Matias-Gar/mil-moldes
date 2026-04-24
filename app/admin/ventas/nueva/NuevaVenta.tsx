@@ -16,7 +16,7 @@ import dynamic from 'next/dynamic';
 const TicketPrinter = dynamic(() => import('../../../../components/venta/TicketPrinter'), { ssr: false });
 import type { TicketPrinterHandle } from '../../../../components/venta/TicketPrinter';
 import { Pack, PackProduct, Producto } from '../../../../hooks/useCarrito';
-import { supabase } from '../../../../lib/SupabaseClient';
+import { getSupabaseClient } from '../../../../lib/SupabaseClient';
 import { showToast } from '../../../../components/ui/Toast';
 
 type VariantMatch = {
@@ -144,6 +144,7 @@ export default function NuevaVenta() {
         let productosDB = [];
         let imagenesDB: { [key: string]: string[] } = {};
         if (productosIds.length > 0) {
+          const supabase = getSupabaseClient();
           const { data: productosData, error: productosError } = await supabase
             .from('v_productos_catalogo')
             .select('*')
@@ -152,6 +153,7 @@ export default function NuevaVenta() {
           productosDB = Array.isArray(productosData) ? productosData : [];
 
           // Traer imágenes asociadas
+          const supabase = getSupabaseClient();
           const { data: imgs } = await supabase
             .from('producto_imagenes')
             .select('producto_id, imagen_url')
@@ -167,6 +169,7 @@ export default function NuevaVenta() {
         // Consultar packs desde la base de datos
         let packsDB = [];
         if (packsIds.length > 0) {
+          const supabase = getSupabaseClient();
           const { data: packsData, error: packsError } = await supabase
             .from('packs')
             .select(`*, pack_productos ( cantidad, productos!pack_productos_producto_id_fkey ( user_id, nombre, precio, categoria, stock ) )`)
@@ -511,6 +514,7 @@ export default function NuevaVenta() {
     setEfectivizando(true);
     try {
       // Obtener token y usuario solo una vez
+      const supabase = getSupabaseClient();
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token;
       const userId = sessionData?.session?.user?.id || null;
@@ -522,6 +526,7 @@ export default function NuevaVenta() {
       // 2. Consultar productos y variantes desde la base de datos
       let productosDB: any[] = [];
       if (productosIds.length > 0) {
+        const supabase = getSupabaseClient();
         const { data: productosData, error: productosError } = await supabase
           .from('productos')
           .select('user_id, nombre, precio, precio_compra, stock, categoria, codigo_barra, producto_variantes ( id, color, precio, stock, sku )')
@@ -533,6 +538,7 @@ export default function NuevaVenta() {
       // 3. Consultar packs y sus productos desde la base de datos
       let packsDB: any[] = [];
       if (packsIds.length > 0) {
+        const supabase = getSupabaseClient();
         const { data: packsData, error: packsError } = await supabase
           .from('packs')
           .select('*, pack_productos ( cantidad, producto_id, variante_id, productos!pack_productos_producto_id_fkey ( user_id, nombre, precio, categoria, stock, producto_variantes ( id, color, precio, stock, sku ) ) )')
