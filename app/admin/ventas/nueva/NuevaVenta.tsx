@@ -206,6 +206,7 @@ export default function NuevaVenta() {
   const beepRef = useRef<HTMLAudioElement | null>(null);
 
   const [efectivizando, setEfectivizando] = React.useState(false);
+  const [pedidoPendienteId, setPedidoPendienteId] = React.useState<string | number | null>(null);
 
   // NUEVO: hasta 2 métodos de pago
   const [pagos, setPagos] = React.useState([
@@ -247,6 +248,7 @@ export default function NuevaVenta() {
       try {
         const pedidoObj = JSON.parse(pedido);
         if (!Array.isArray(pedidoObj.productos)) return;
+        setPedidoPendienteId(pedidoObj.id || null);
         // Agrupar productos por producto_id, variante_id y color
         const grouped: { [key: string]: any } = {};
         for (const p of pedidoObj.productos) {
@@ -1006,7 +1008,6 @@ export default function NuevaVenta() {
           metodo_pago: pagoObj.metodo,
           usuario_email: userEmail,
           sucursal_id: activeSucursalId || undefined,
-          created_at: new Date().toISOString(),
         };
         (Object.keys(pagoVenta) as Array<keyof typeof pagoVenta>).forEach(k => {
           if (pagoVenta[k] === undefined) delete pagoVenta[k];
@@ -1225,7 +1226,7 @@ export default function NuevaVenta() {
         let payment_method = 'other';
         if (pagoObj.metodo === 'efectivo') payment_method = 'cash';
         else if (pagoObj.metodo === 'qr') payment_method = 'qr';
-        else if (pagoObj.metodo === 'tarjeta') payment_method = 'other';
+        else if (pagoObj.metodo === 'tarjeta') payment_method = 'card';
         else if (pagoObj.metodo === 'transferencia') payment_method = 'transfer';
         if (token) {
           const response = await fetch('/api/cash/movements', {
@@ -1274,6 +1275,20 @@ export default function NuevaVenta() {
         cambio
       };
       printerRef.current?.printComprobante();
+      if (pedidoPendienteId) {
+        let pedidoQuery = supabase
+          .from('carritos_pendientes')
+          .update({ confirmado_pago: true })
+          .eq('id', pedidoPendienteId);
+        if (activeSucursalId) pedidoQuery = pedidoQuery.eq('sucursal_id', activeSucursalId);
+        const { error: pedidoError } = await pedidoQuery;
+        if (pedidoError) {
+          console.error('No se pudo marcar el pedido como confirmado:', pedidoError);
+          showToast('La venta se guardo, pero el pedido pendiente no se pudo cerrar automaticamente.', 'info');
+        } else {
+          setPedidoPendienteId(null);
+        }
+      }
       // limpieza de carrito y cliente después de impresión
       setCarrito([]);
       setPagos([{ metodo: '', monto: 0 }]);
@@ -1299,7 +1314,7 @@ export default function NuevaVenta() {
       showToast('Error al crear venta: ' + errorMessage, 'error');
       setEfectivizando(false);
     }
-  }, [carrito, cliente, pagos, cambio, totalCobrar, subtotal, totalDescuento, packs, setCarrito, cambiarCampo, envio, comision, publicidad, rebajas, impuestosCalculados, cobrarImpuestos, registrarIngresoEnCaja]);
+  }, [carrito, cliente, pagos, cambio, totalCobrar, subtotal, totalDescuento, packs, setCarrito, cambiarCampo, envio, comision, publicidad, rebajas, impuestosCalculados, cobrarImpuestos, registrarIngresoEnCaja, pedidoPendienteId, activeSucursalId]);
 
   // ...continued building UI mostly replicates previous layout using components
 

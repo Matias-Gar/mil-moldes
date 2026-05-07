@@ -334,6 +334,7 @@ export default function EditarCatalogo() {
             talla: v.talla,
             stock: Math.max(0, Math.floor(Number(v.stock) || 0)),
             stock_decimal: Number(v.stock) || 0,
+            stock_inicial: Math.max(0, Math.floor(Number(v.stock) || 0)),
             stock_inicial_decimal: Number(v.stock) || 0,
             sku: v.sku,
             precio: parseDecimalInput(v.precio, null),
