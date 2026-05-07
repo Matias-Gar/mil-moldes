@@ -16,7 +16,7 @@ interface Cliente {
 
 type GuardarAccion = 'add' | 'update';
 
-export function useCliente() {
+export function useCliente(sucursalId?: string | null) {
   const [cliente, setCliente] = useState<Cliente>({
     nombre: '',
     carnet: '',
@@ -39,6 +39,7 @@ export function useCliente() {
     }
 
     let query = supabase.from('clientes').select('id, carnet, telefono').limit(1);
+    if (sucursalId) query = query.eq('sucursal_id', sucursalId);
     if (carnet && telefono) {
       query = query.or(`carnet.eq.${carnet},telefono.eq.${telefono}`);
     } else if (carnet) {
@@ -56,7 +57,7 @@ export function useCliente() {
       existente: exists,
       source: exists ? 'clientes' : (c.source === 'clientes' ? '' : c.source),
     }));
-  }, []);
+  }, [sucursalId]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -94,12 +95,14 @@ export function useCliente() {
           cambiarCampo('email', perfil.email);
           cambiarCampo('source', 'perfiles');
         } else {
-          const { data: ventasHist } = await supabase
+          let ventasHistQuery = supabase
             .from('ventas')
             .select('cliente_email')
             .eq('cliente_nit', nitval)
             .order('fecha', { ascending: false })
             .limit(1);
+          if (sucursalId) ventasHistQuery = ventasHistQuery.eq('sucursal_id', sucursalId);
+          const { data: ventasHist } = await ventasHistQuery;
           if (ventasHist && ventasHist[0]?.cliente_email) {
             cambiarCampo('email', ventasHist[0].cliente_email);
             cambiarCampo('source', 'ventas (histórico)');
@@ -118,11 +121,12 @@ export function useCliente() {
 
     // 2) clientes legacy
     try {
-      const { data: cli, error: cliErr } = await supabase
+      let cliQuery = supabase
         .from('clientes')
         .select('id, nombre, carnet, telefono, email')
-        .eq('carnet', q)
-        .maybeSingle();
+        .eq('carnet', q);
+      if (sucursalId) cliQuery = cliQuery.eq('sucursal_id', sucursalId);
+      const { data: cli, error: cliErr } = await cliQuery.maybeSingle();
       if (!cliErr && cli) {
         setCliente({
           nombre: cli.nombre || '',
@@ -144,12 +148,14 @@ export function useCliente() {
 
     // 3) ventas
     try {
-      const { data: ventasByNit } = await supabase
+      let ventasByNitQuery = supabase
         .from('ventas')
         .select('cliente_nombre, cliente_telefono, cliente_email')
         .eq('cliente_nit', q)
         .order('fecha', { ascending: false })
         .limit(1);
+      if (sucursalId) ventasByNitQuery = ventasByNitQuery.eq('sucursal_id', sucursalId);
+      const { data: ventasByNit } = await ventasByNitQuery;
       if (ventasByNit && ventasByNit.length) {
         const v = ventasByNit[0];
         setCliente((c: Cliente) => ({
@@ -169,7 +175,7 @@ export function useCliente() {
 
     setCliente((c: Cliente) => ({ ...c, guardado: false, existente: false, source: '' }));
     showToast('Cliente no encontrado. Puedes anadirlo para busquedas futuras.', 'info');
-  }, [cliente.carnet, cambiarCampo]);
+  }, [cliente.carnet, cambiarCampo, sucursalId]);
 
   const guardar = useCallback(async (accion: GuardarAccion) => {
     const nombre = cliente.nombre.trim();
@@ -187,11 +193,12 @@ export function useCliente() {
         }
 
         if (carnet) {
-          const { data: existingClient, error: existingError } = await supabase
+          let existingQuery = supabase
             .from('clientes')
             .select('id')
-            .eq('carnet', carnet)
-            .maybeSingle();
+            .eq('carnet', carnet);
+          if (sucursalId) existingQuery = existingQuery.eq('sucursal_id', sucursalId);
+          const { data: existingClient, error: existingError } = await existingQuery.maybeSingle();
 
           if (existingError) return showToast('Error validando cliente: ' + existingError.message, 'error');
           if (existingClient) return showToast('El cliente ya existe. Usa "Actualizar cliente".', 'info');
@@ -201,7 +208,8 @@ export function useCliente() {
           nombre,
           carnet: carnet || null,
           telefono: telefono || null,
-          email: cliente.email || null
+          email: cliente.email || null,
+          sucursal_id: sucursalId || null
         }]);
 
         if (insertError) return showToast('Error al anadir cliente: ' + (insertError.message || ''), 'error');
@@ -252,6 +260,7 @@ export function useCliente() {
           email: cliente.email || null,
           carnet: carnet || null,
         });
+      if (sucursalId) updateQuery = updateQuery.eq('sucursal_id', sucursalId);
 
       if (carnet) {
         updateQuery = updateQuery.eq('carnet', carnet);
@@ -279,13 +288,15 @@ export function useCliente() {
       // console.error(e);
       showToast('Error inesperado al actualizar cliente', 'error');
     }
-  }, [cliente]);
+  }, [cliente, sucursalId]);
 
   const buscarEmailHistorico = useCallback(async () => {
     try {
       const q = cliente.carnet.trim() || cliente.nit.trim();
       if (!q) return showToast('Introduce carnet o NIT para buscar email historico', 'info');
-      const { data } = await supabase.from('ventas').select('cliente_email').or(`cliente_nit.ilike.%${q}%,cliente_telefono.ilike.%${q}%`).order('fecha', { ascending: false }).limit(1);
+      let query = supabase.from('ventas').select('cliente_email').or(`cliente_nit.ilike.%${q}%,cliente_telefono.ilike.%${q}%`).order('fecha', { ascending: false }).limit(1);
+      if (sucursalId) query = query.eq('sucursal_id', sucursalId);
+      const { data } = await query;
       if (data && data[0]?.cliente_email) {
         setCliente((c: Cliente) => ({ ...c, email: data[0].cliente_email, source: 'ventas (histórico)' }));
         showToast('Email recuperado desde ventas historicas');
@@ -293,7 +304,7 @@ export function useCliente() {
         showToast('No se encontro email historico', 'info');
       }
     } catch (e) { /* console.warn(e); */ showToast('Error buscando email historico', 'error'); }
-  }, [cliente.carnet, cliente.nit]);
+  }, [cliente.carnet, cliente.nit, sucursalId]);
 
   return { cliente, cambiarCampo, buscarPorCarnet, guardar, buscarEmailHistorico };
 }

@@ -177,7 +177,12 @@ export default function SalesTable({ rows }) {
                                           {item.tipo === 'pack' ? <span className="ml-2 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-violet-700">Pack</span> : null}
                                         </td>
                                         <td className="px-2 py-2 text-slate-600">{item.color || '-'}</td>
-                                        <td className="px-2 py-2">{item.cantidad}</td>
+                                        <td className="px-2 py-2">
+                                          {item.cantidad}{item.unidad ? ` ${item.unidad}` : ''}
+                                          {item.cantidadBase && item.cantidadBase !== item.cantidad ? (
+                                            <div className="text-[11px] text-slate-500">Base: {Number(item.cantidadBase).toFixed(3)}</div>
+                                          ) : null}
+                                        </td>
                                         <td className="px-2 py-2">{money(item.precio)}</td>
                                         <td className="px-2 py-2">{money(item.costoUnitario)}</td>
                                         <td className="px-2 py-2">{money(item.costo)}</td>

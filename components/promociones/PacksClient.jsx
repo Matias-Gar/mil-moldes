@@ -2,10 +2,12 @@
 
 
 import { useState, useEffect } from "react";
-import { getSupabaseClient } from "@/lib/SupabaseClient";
+import { supabase } from "@/lib/SupabaseClient";
 import Image from "next/image";
+import { useSucursalActiva } from "@/components/admin/SucursalContext";
 
 export default function PacksClient({ initialPacks = [] }) {
+  const { activeSucursalId } = useSucursalActiva();
 
   const [editPack, setEditPack] = useState(null);
   const [productosAll, setProductosAll] = useState([]);
@@ -13,9 +15,11 @@ export default function PacksClient({ initialPacks = [] }) {
   // Cargar todos los productos para edición
   useEffect(() => {
     if (editPack) {
-      supabase.from("productos").select("user_id, nombre, precio, stock").then(({ data }) => setProductosAll(data || []));
+      let query = supabase.from("productos").select("user_id, nombre, precio, stock");
+      if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+      query.then(({ data }) => setProductosAll(data || []));
     }
-  }, [editPack]);
+  }, [editPack, activeSucursalId]);
 
   const [packs, setPacks] = useState(initialPacks);
   const [showForm, setShowForm] = useState(false);
@@ -27,12 +31,43 @@ export default function PacksClient({ initialPacks = [] }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const fetchPacks = async () => {
+    let query = supabase
+      .from("packs")
+      .select(`
+        *,
+        pack_productos (
+          producto_id,
+          cantidad,
+          productos (
+            user_id,
+            nombre,
+            imagen_url
+          )
+        )
+      `)
+      .order("id", { ascending: true });
+    if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+    const { data, error } = await query;
+    if (error) {
+      setError("Error al cargar packs");
+      return;
+    }
+    setPacks(data || []);
+  };
+
+  useEffect(() => {
+    fetchPacks();
+  }, [activeSucursalId]);
+
   // Cargar productos solo cuando se abre el form
   const fetchProductos = async () => {
     setLoading(true);
-    const { data, error } = await supabase
+    let query = supabase
       .from("productos")
       .select("user_id, nombre, precio, stock");
+    if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+    const { data, error } = await query;
     setProductos(data || []);
     setLoading(false);
     if (error) setError("Error al cargar productos");
@@ -96,7 +131,8 @@ export default function PacksClient({ initialPacks = [] }) {
           nombre: nombre || `Pack Especial: ${productosSeleccionados.map(p => p.nombre).join(' + ')}`,
           descripcion: descripcion || `Llévate ${productosSeleccionados.length} productos por un solo precio!`,
           precio_pack: Number(precioPack),
-          activo: true
+          activo: true,
+          sucursal_id: activeSucursalId || null
         }
       ])
       .select();
@@ -107,7 +143,12 @@ export default function PacksClient({ initialPacks = [] }) {
     }
     const packId = nuevoPack[0].id;
     // Insertar productos en pack_productos
-    const packProductos = productosSeleccionados.map(p => ({ pack_id: packId, producto_id: p.user_id, cantidad: p.cantidad }));
+    const packProductos = productosSeleccionados.map(p => ({
+      pack_id: packId,
+      producto_id: p.user_id,
+      cantidad: p.cantidad,
+      sucursal_id: activeSucursalId || null
+    }));
     const { error: errorPP } = await supabase
       .from("pack_productos")
       .insert(packProductos);
@@ -117,11 +158,7 @@ export default function PacksClient({ initialPacks = [] }) {
       return;
     }
     // Refrescar packs
-    const { data: nuevosPacks } = await supabase
-      .from("packs")
-      .select("*")
-      .order("id", { ascending: true });
-    setPacks(nuevosPacks || []);
+    await fetchPacks();
     setShowForm(false);
     setSelected([]);
     setNombre(""); setDescripcion(""); setPrecioPack("");
@@ -264,7 +301,9 @@ export default function PacksClient({ initialPacks = [] }) {
                     title="Eliminar pack"
                     onClick={async () => {
                       if (window.confirm(`¿Seguro que deseas eliminar el pack "${p.nombre}"?`)) {
-                        const { error } = await supabase.from('packs').delete().eq('id', p.id);
+                        let query = supabase.from('packs').delete().eq('id', p.id);
+                        if (activeSucursalId) query = query.eq('sucursal_id', activeSucursalId);
+                        const { error } = await query;
                         if (!error) {
                           setPacks(packs.filter(pk => pk.id !== p.id));
                         } else {
@@ -325,20 +364,28 @@ export default function PacksClient({ initialPacks = [] }) {
                       return;
                     }
                     // Actualizar pack en la base de datos
-                    const { error } = await supabase.from('packs').update({ nombre, descripcion, imagen_url }).eq('id', editPack.id);
+                    let packQuery = supabase.from('packs').update({ nombre, descripcion, imagen_url }).eq('id', editPack.id);
+                    if (activeSucursalId) packQuery = packQuery.eq('sucursal_id', activeSucursalId);
+                    const { error } = await packQuery;
                     if (error) {
                       alert('Error al actualizar pack: ' + error.message);
                       return;
                     }
                     // Actualizar productos del pack: eliminar todos y volver a insertar
-                    await supabase.from('pack_productos').delete().eq('pack_id', editPack.id);
-                    const nuevosPackProductos = productosSeleccionados.map(p => ({ pack_id: editPack.id, producto_id: p.producto_id, cantidad: p.cantidad }));
+                    let packProductosDelete = supabase.from('pack_productos').delete().eq('pack_id', editPack.id);
+                    if (activeSucursalId) packProductosDelete = packProductosDelete.eq('sucursal_id', activeSucursalId);
+                    await packProductosDelete;
+                    const nuevosPackProductos = productosSeleccionados.map(p => ({
+                      pack_id: editPack.id,
+                      producto_id: p.producto_id,
+                      cantidad: p.cantidad,
+                      sucursal_id: activeSucursalId || null
+                    }));
                     if (nuevosPackProductos.length > 0) {
                       await supabase.from('pack_productos').insert(nuevosPackProductos);
                     }
                     // Refrescar packs
-                    const { data: nuevosPacks } = await supabase.from('packs').select('*').order('id', { ascending: true });
-                    setPacks(nuevosPacks || []);
+                    await fetchPacks();
                     setEditPack(null);
                   }}
                 >

@@ -1,6 +1,6 @@
-﻿"use client";
+"use client";
 import React, { useEffect, useRef, useCallback } from 'react';
-import { useCarrito, getCarritoToken } from '../../../../hooks/useCarrito';
+import { useCarrito } from '../../../../hooks/useCarrito';
 import { useCliente } from '../../../../hooks/useCliente';
 import { useProductos } from '../../../../hooks/useProductos';
 import { usePromociones } from '../../../../lib/usePromociones';
@@ -15,9 +15,10 @@ import CarritoPanel from '../../../../components/venta/CarritoPanel';
 import dynamic from 'next/dynamic';
 const TicketPrinter = dynamic(() => import('../../../../components/venta/TicketPrinter'), { ssr: false });
 import type { TicketPrinterHandle } from '../../../../components/venta/TicketPrinter';
-import { Pack, PackProduct, Producto } from '../../../../hooks/useCarrito';
-import { getSupabaseClient } from '../../../../lib/SupabaseClient';
+import { Pack, Producto } from '../../../../hooks/useCarrito';
+import { supabase } from '../../../../lib/SupabaseClient';
 import { showToast } from '../../../../components/ui/Toast';
+import { useSucursalActiva } from '../../../../components/admin/SucursalContext';
 
 type VariantMatch = {
   variante_id?: number | string;
@@ -25,6 +26,7 @@ type VariantMatch = {
   color?: string;
   precio?: number;
   stock?: number;
+  stock_decimal?: number;
   sku?: string;
   codigo_barra?: string;
 };
@@ -34,6 +36,54 @@ type VentaCajaPayload = {
   fecha?: string;
   total?: number;
   modo_pago?: string;
+};
+
+type ProductoDB = {
+  user_id: string | number;
+  nombre?: string;
+  precio?: number;
+  precio_compra?: number;
+  stock?: number;
+  unidad_base?: string;
+  unidades_alternativas?: string[];
+  factor_conversion?: number;
+  producto_variantes?: Array<{
+    id?: string | number;
+    color?: string;
+    precio?: number;
+    stock?: number;
+    stock_decimal?: number;
+  }>;
+};
+
+type StockRequest = {
+  nombre: string;
+  color?: string | null;
+  disponible: number;
+  solicitado: number;
+};
+
+type PackDB = {
+  id: string | number;
+  nombre?: string;
+  precio_pack?: number;
+  pack_productos?: Array<{
+    cantidad?: number;
+    variante_id?: string | number | null;
+    productos?: {
+      user_id?: string | number;
+      nombre?: string;
+      precio?: number;
+      stock?: number;
+      producto_variantes?: Array<{
+        id?: string | number;
+        color?: string;
+        precio?: number;
+        stock?: number;
+        stock_decimal?: number;
+      }>;
+    };
+  }>;
 };
 
 function parseMoneyInput(value: string) {
@@ -48,17 +98,86 @@ function formatMoneyInput(value: number) {
   return String(value).replace('.', ',');
 }
 
+function parsePositiveNumber(value: string | number) {
+  const parsed = parseMoneyInput(String(value ?? ''));
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+}
+
+function normalizeQuantity(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+}
+
+function getVariantStock(variant?: { stock?: number; stock_decimal?: number } | null) {
+  const decimal = Number(variant?.stock_decimal);
+  const legacy = Number(variant?.stock);
+  return normalizeQuantity(Number.isFinite(decimal) && decimal > 0 ? decimal : legacy || 0);
+}
+
+function getProductStock(product?: { stock?: number } | null) {
+  return normalizeQuantity(product?.stock ?? 0);
+}
+
+function hasUnitConversion(product?: { unidades_alternativas?: string[]; factor_conversion?: number } | null) {
+  return Boolean(
+    Array.isArray(product?.unidades_alternativas) &&
+    product.unidades_alternativas.length > 0 &&
+    Number(product?.factor_conversion || 0) > 0
+  );
+}
+
+function shouldUseProductStockForVariant(product?: { unidades_alternativas?: string[]; factor_conversion?: number; producto_variantes?: unknown[] } | null) {
+  return hasUnitConversion(product);
+}
+
+function getStockForVariantSale(product: ProductoDB, variant?: { stock?: number; stock_decimal?: number } | null) {
+  return shouldUseProductStockForVariant(product) ? getProductStock(product) : getVariantStock(variant);
+}
+
+function formatStockQuantity(value: number) {
+  return Number(value.toFixed(3)).toString();
+}
+
+function getSaleBaseQuantity(
+  item: {
+    cantidad?: number;
+    cantidad_base?: number;
+    cantidad_display?: number;
+    unidad?: string;
+    unidad_base?: string;
+    factor_conversion?: number;
+  },
+  product?: { unidad_base?: string; factor_conversion?: number } | null
+) {
+  const unidadBase = String(product?.unidad_base || item.unidad_base || item.unidad || 'unidad');
+  const unidadVenta = String(item.unidad || unidadBase);
+  const factor = Number(item.factor_conversion || product?.factor_conversion || 0);
+  const visible = normalizeQuantity(item.cantidad_display ?? item.cantidad ?? item.cantidad_base ?? 1);
+  if (unidadVenta !== unidadBase && Number.isFinite(factor) && factor > 0) {
+    return visible / factor;
+  }
+  return normalizeQuantity(item.cantidad_base ?? item.cantidad ?? visible);
+}
+
+function toIntegerDetailQuantity(cantidadBase: number) {
+  const parsed = Number(cantidadBase);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 1;
+  return Math.max(1, Math.floor(parsed));
+}
+
 
 export default function NuevaVenta() {
   // hooks
-  const { cliente, cambiarCampo, buscarPorCarnet, guardar, buscarEmailHistorico } = useCliente();
-  const { promociones } = usePromociones();
-  const { packs } = usePacks() as { packs: Pack[] };
+  const { activeSucursalId } = useSucursalActiva();
+  const { cliente, cambiarCampo, buscarPorCarnet, guardar, buscarEmailHistorico } = useCliente(activeSucursalId);
+  const { promociones } = usePromociones(activeSucursalId);
+  const { packs } = usePacks(activeSucursalId) as { packs: Pack[] };
   const {
     carrito,
     agregar,
     quitar,
     cambiarCantidad,
+    cambiarUnidadYCantidad,
     subtotal,
     totalDescuento,
     total,
@@ -74,7 +193,7 @@ export default function NuevaVenta() {
     searchLoading,
     fetchProductos,
     searchProductos
-  } = useProductos(false); // no incluir precio de compra para vendedores
+  } = useProductos(false, activeSucursalId); // no incluir precio de compra para vendedores
 
   const [busqueda, setBusqueda] = React.useState('');
   const [showSuggestions, setShowSuggestions] = React.useState(false);
@@ -104,13 +223,12 @@ export default function NuevaVenta() {
   const [showInsufficientPaymentWarning, setShowInsufficientPaymentWarning] = React.useState(false);
 
   const totalBaseOperacion = Math.max(0, Number(total) + Number(envio) + Number(comision) - Number(publicidad) - Number(rebajas));
-  const totalConImpuestos = cobrarImpuestos ? (totalBaseOperacion / (1 - tasaImpuestos)) : totalBaseOperacion;
-  const impuestosCalculados = cobrarImpuestos ? (totalConImpuestos - totalBaseOperacion) : 0;
-  const totalCobrar = Number(totalConImpuestos.toFixed(2));
+  const impuestosCalculados = cobrarImpuestos ? Number((totalBaseOperacion * tasaImpuestos).toFixed(2)) : 0;
+  const totalCobrar = Number((totalBaseOperacion + impuestosCalculados).toFixed(2));
   const sumaPagos = pagos.reduce((acc, p) => acc + Number(p.monto || 0), 0);
-  const cambio = sumaPagos > 0 ? sumaPagos - totalCobrar : 0;
-  const pagoInsuficiente = sumaPagos > 0 && sumaPagos < totalCobrar;
   const tienePagoEnEfectivo = pagos.some((p) => p.metodo === 'efectivo' && Number(p.monto || 0) > 0);
+  const cambio = tienePagoEnEfectivo && sumaPagos > totalCobrar ? Number((sumaPagos - totalCobrar).toFixed(2)) : 0;
+  const pagoInsuficiente = sumaPagos > 0 && (sumaPagos + 0.009) < totalCobrar;
 
   const printerRef = useRef<TicketPrinterHandle>(null);
   const efectivizarBtnRef = useRef<HTMLButtonElement>(null);
@@ -139,12 +257,19 @@ export default function NuevaVenta() {
           }
           const variante_id = p.variante_id || 'default';
           const color = p.color || '';
-          const key = `${producto_id}|${variante_id}|${color}|${p.pack_id || ''}`;
+          const unidad = p.unidad || p.unidad_base || 'unidad';
+          const key = `${producto_id}|${variante_id}|${color}|${p.pack_id || ''}|${unidad}`;
+          const cantidadDisplay = normalizeQuantity(p.cantidad_display ?? p.cantidad ?? 1);
+          const cantidadBase = normalizeQuantity(p.cantidad_base ?? p.cantidad ?? 1);
           if (!grouped[key]) {
             grouped[key] = { ...p };
-            grouped[key].cantidad = Number(p.cantidad) || 0;
+            grouped[key].cantidad = cantidadDisplay;
+            grouped[key].cantidad_display = cantidadDisplay;
+            grouped[key].cantidad_base = cantidadBase;
           } else {
-            grouped[key].cantidad += Number(p.cantidad) || 0;
+            grouped[key].cantidad += cantidadDisplay;
+            grouped[key].cantidad_display = Number(grouped[key].cantidad_display || 0) + cantidadDisplay;
+            grouped[key].cantidad_base = Number(grouped[key].cantidad_base || 0) + cantidadBase;
           }
         }
         const productosAgrupados = Object.values(grouped);
@@ -156,20 +281,33 @@ export default function NuevaVenta() {
         // Consultar productos desde la base de datos, trayendo también la imagen principal
         let productosDB = [];
         let imagenesDB: { [key: string]: string[] } = {};
+        let unidadesByProducto: Record<string, any> = {};
         if (productosIds.length > 0) {
-          const supabaseClient = getSupabaseClient();
-          const { data: productosData, error: productosError } = await supabaseClient
+          const supabaseClient = supabase;
+          let productosQuery = supabaseClient
             .from('v_productos_catalogo')
             .select('*')
             .in('producto_id', productosIds);
+          if (activeSucursalId) productosQuery = productosQuery.eq('sucursal_id', activeSucursalId);
+          const { data: productosData, error: productosError } = await productosQuery;
           if (productosError) throw productosError;
           productosDB = Array.isArray(productosData) ? productosData : [];
 
+          let unidadesQuery = supabaseClient
+            .from('productos')
+            .select('user_id, stock, unidad_base, unidades_alternativas, factor_conversion')
+            .in('user_id', productosIds);
+          if (activeSucursalId) unidadesQuery = unidadesQuery.eq('sucursal_id', activeSucursalId);
+          const { data: unidadesData } = await unidadesQuery;
+          unidadesByProducto = Object.fromEntries((Array.isArray(unidadesData) ? unidadesData : []).map((row) => [String(row.user_id), row]));
+
           // Traer imágenes asociadas
-          const { data: imgs } = await supabaseClient
+          let imgsQuery = supabaseClient
             .from('producto_imagenes')
             .select('producto_id, imagen_url')
             .in('producto_id', productosIds);
+          if (activeSucursalId) imgsQuery = imgsQuery.eq('sucursal_id', activeSucursalId);
+          const { data: imgs } = await imgsQuery;
           if (Array.isArray(imgs)) {
             imgs.forEach(i => {
               if (!imagenesDB[i.producto_id]) imagenesDB[i.producto_id] = [];
@@ -181,11 +319,12 @@ export default function NuevaVenta() {
         // Consultar packs desde la base de datos
         let packsDB = [];
         if (packsIds.length > 0) {
-          const supabase = getSupabaseClient();
-          const { data: packsData, error: packsError } = await supabase
+          let packsQuery = supabase
             .from('packs')
-            .select(`*, pack_productos ( cantidad, productos!pack_productos_producto_id_fkey ( user_id, nombre, precio, categoria, stock ) )`)
+            .select(`*, pack_productos ( cantidad, producto_id, variante_id, productos!pack_productos_producto_id_fkey ( user_id, nombre, precio, categoria, stock, producto_variantes ( id, color, precio, stock, stock_decimal, sku ) ) )`)
             .in('id', packsIds);
+          if (activeSucursalId) packsQuery = packsQuery.eq('sucursal_id', activeSucursalId);
+          const { data: packsData, error: packsError } = await packsQuery;
           if (packsError) throw packsError;
           packsDB = Array.isArray(packsData) ? packsData : [];
         }
@@ -200,7 +339,9 @@ export default function NuevaVenta() {
               pack_id: pack.id,
               pack_data: pack,
               nombre: pack.nombre || 'Pack especial',
-              cantidad: p.cantidad || 1,
+              cantidad: normalizeQuantity(p.cantidad_base ?? p.cantidad ?? 1),
+              cantidad_base: normalizeQuantity(p.cantidad_base ?? p.cantidad ?? 1),
+              cantidad_display: normalizeQuantity(p.cantidad_display ?? p.cantidad ?? 1),
               precio: pack.precio_pack,
               precio_pack: pack.precio_pack,
               precio_individual: (pack.pack_productos ?? []).reduce((t: number, i: { productos: { precio: number }, cantidad: number }) => t + (i.productos.precio * i.cantidad), 0),
@@ -218,22 +359,45 @@ export default function NuevaVenta() {
           }
           const productoCompleto = productosDB.find((prod: { producto_id: string | number }) => String(prod.producto_id) === String(prodId));
           if (!productoCompleto) return { ...p, error: 'Producto no encontrado en base de datos' };
+          const unidadesProducto = unidadesByProducto[String(prodId)] || {};
+          const variantesProducto = Array.isArray(productoCompleto.variantes) ? productoCompleto.variantes : [];
+          const varianteSeleccionada = p.variante_id
+            ? variantesProducto.find((v: VariantMatch) => String(v.variante_id ?? v.id) === String(p.variante_id))
+            : null;
           // Siempre usar la imagen del producto
           const imagenesProducto = imagenesDB[productoCompleto.producto_id] || [];
           const imagen_url = imagenesProducto.length > 0 ? imagenesProducto[0] : '/sin-imagen.png';
+          const unidadBase = p.unidad_base || unidadesProducto.unidad_base || productoCompleto.unidad_base || p.unidad || 'unidad';
+          const unidadesAlternativas = Array.isArray(p.unidades_alternativas)
+            ? p.unidades_alternativas
+            : Array.isArray(unidadesProducto.unidades_alternativas)
+              ? unidadesProducto.unidades_alternativas
+              : [];
+          const factorConversion = Number(p.factor_conversion ?? unidadesProducto.factor_conversion ?? productoCompleto.factor_conversion ?? 0) || undefined;
+          const cantidadBase = normalizeQuantity(p.cantidad_base ?? p.cantidad ?? 1);
+          const cantidadDisplay = normalizeQuantity(p.cantidad_display ?? p.cantidad ?? 1);
           return {
             ...productoCompleto,
-            cantidad: p.cantidad || 1,
+            cantidad: cantidadBase,
+            cantidad_base: cantidadBase,
+            cantidad_display: cantidadDisplay,
+            unidad: p.unidad || unidadBase,
+            unidad_base: unidadBase,
+            unidades_alternativas: unidadesAlternativas,
+            unidades_disponibles: [unidadBase, ...unidadesAlternativas.filter((u: string) => u !== unidadBase)],
+            factor_conversion: factorConversion,
             tipo: 'producto',
-            cart_key: `prod:${productoCompleto.producto_id}:${p.variante_id || 'default'}`,
+            cart_key: `prod:${productoCompleto.producto_id}:${p.variante_id || 'default'}:${p.unidad || unidadBase}`,
             variante_id: p.variante_id || productoCompleto.variante_id,
             color: p.color || productoCompleto.color,
             precio: p.precio_unitario || productoCompleto.precio,
+            precio_original: p.precio_original ?? p.precio_unitario ?? productoCompleto.precio,
+            promocion_aplicada: p.promocion_aplicada || null,
             nombre: productoCompleto.nombre || 'Producto sin nombre',
-            stock: productoCompleto.stock,
+            stock: varianteSeleccionada ? getVariantStock(varianteSeleccionada) : Number(unidadesProducto.stock ?? productoCompleto.stock ?? 0),
             categoria: productoCompleto.categoria,
             categorias: productoCompleto.categorias,
-            variantes: productoCompleto.variantes,
+            variantes: variantesProducto,
             codigo_barra: productoCompleto.codigo_barra,
             codigo: productoCompleto.codigo,
             imagenes: productoCompleto.imagenes,
@@ -252,7 +416,9 @@ export default function NuevaVenta() {
 
         // Cargar datos de cliente si existen
         if (pedidoObj.cliente_nombre) cambiarCampo('nombre', pedidoObj.cliente_nombre);
-        if (pedidoObj.cliente_email) cambiarCampo('email', pedidoObj.cliente_email);
+        if (pedidoObj.usuario_email || pedidoObj.cliente_email) cambiarCampo('email', pedidoObj.usuario_email || pedidoObj.cliente_email);
+        if (pedidoObj.cliente_telefono) cambiarCampo('telefono', pedidoObj.cliente_telefono);
+        if (pedidoObj.cliente_nit) cambiarCampo('nit', pedidoObj.cliente_nit);
       } catch (e: unknown) {
         console.error('Error cargando pedido:', e);
         let errorMsg = '';
@@ -273,7 +439,7 @@ export default function NuevaVenta() {
   // shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key.toLowerCase() === 'b') { e.preventDefault(); document.querySelector<HTMLInputElement>('input[placeholder="Escanea o ingresa cÃ³digo de barra"]')?.focus(); }
+      if (e.ctrlKey && e.key.toLowerCase() === 'b') { e.preventDefault(); document.querySelector<HTMLInputElement>('input[placeholder="Escanea o ingresa código de barra"]')?.focus(); }
       if (e.ctrlKey && e.key.toLowerCase() === 'f') { e.preventDefault(); document.querySelector<HTMLInputElement>('input[placeholder*="Buscar producto"]')?.focus(); }
       if (e.ctrlKey && e.key.toLowerCase() === 'k') { e.preventDefault(); document.querySelector<HTMLInputElement>('input[placeholder*="Carnet"]')?.focus(); }
       if (e.ctrlKey && e.key.toLowerCase() === 'e') { e.preventDefault(); document.querySelector<HTMLButtonElement>('button[aria-label="efectivizar-venta"]')?.click(); }
@@ -319,6 +485,65 @@ export default function NuevaVenta() {
     return () => clearTimeout(timeoutId);
   }, [stockWarning, clearStockWarning]);
 
+  useEffect(() => {
+    if (!Array.isArray(productos) || productos.length === 0 || carrito.length === 0) return;
+
+    setCarrito((prev) => {
+      let changed = false;
+      const next = prev.map((item) => {
+        if (item.tipo === 'pack' || item.user_id == null) return item;
+        const product = productos.find((p) => String(p.user_id) === String(item.user_id));
+        if (!product || !hasUnitConversion(product)) return item;
+
+        const unidadBase = String(product.unidad_base || item.unidad_base || 'unidad');
+        const alternativas = Array.isArray(product.unidades_alternativas)
+          ? product.unidades_alternativas.filter((u) => u && u !== unidadBase)
+          : [];
+        const unidadAlternativa = alternativas[0];
+        const factor = Number(product.factor_conversion || item.factor_conversion || 0);
+        const stockBase = getProductStock(product);
+        if (!unidadAlternativa || !Number.isFinite(factor) || factor <= 0) return item;
+
+        const unidadesDisponibles = [
+          ...(stockBase >= 1 ? [unidadBase] : []),
+          ...(stockBase * factor > 0 ? [unidadAlternativa] : []),
+        ];
+        const unidadActual = String(item.unidad || item.unidad_base || unidadBase);
+        const unidadVenta = unidadesDisponibles.includes(unidadActual)
+          ? unidadActual
+          : (unidadesDisponibles[0] || unidadAlternativa);
+        const cantidadDisplay = normalizeQuantity(item.cantidad_display ?? item.cantidad ?? 1) || 1;
+        const cantidadBase = unidadVenta === unidadBase ? cantidadDisplay : cantidadDisplay / factor;
+
+        const patched = {
+          ...item,
+          stock: stockBase,
+          unidad_base: unidadBase,
+          unidades_alternativas: alternativas,
+          unidades_disponibles: unidadesDisponibles,
+          factor_conversion: factor,
+          unidad: unidadVenta,
+          cantidad: cantidadBase,
+          cantidad_base: cantidadBase,
+          cantidad_display: cantidadDisplay,
+        };
+
+        const same =
+          Number(item.stock || 0) === stockBase &&
+          item.unidad_base === patched.unidad_base &&
+          item.unidad === patched.unidad &&
+          Number(item.factor_conversion || 0) === factor &&
+          Number(item.cantidad_base || 0) === cantidadBase &&
+          Number(item.cantidad_display || 0) === cantidadDisplay &&
+          JSON.stringify(item.unidades_disponibles || []) === JSON.stringify(unidadesDisponibles);
+
+        if (!same) changed = true;
+        return same ? item : patched;
+      });
+      return changed ? next : prev;
+    });
+  }, [productos, carrito, setCarrito]);
+
   // Escaneo: si el producto está en un pack, ofrecer opción de agregar pack o individual
   const procesarCodigo = useCallback(async (codigo: string) => {
     const normalizeCode = (value: unknown) => String(value ?? '').replace(/\D/g, '');
@@ -336,13 +561,19 @@ export default function NuevaVenta() {
         return matchesBarcode(codigo, currentVariant?.codigo_barra) || matchesBarcode(codigo, currentVariant?.sku);
       }) as VariantMatch | undefined;
       if (!matchedVariant) return null;
+      const productHasConversion = hasUnitConversion(p as {
+        unidades_alternativas?: string[];
+        factor_conversion?: number;
+      });
 
       return {
         ...p,
         variante_id: matchedVariant?.variante_id ?? matchedVariant?.id,
         color: matchedVariant?.color || 'Sin color',
         precio: Number(matchedVariant?.precio ?? p.precio ?? 0),
-        stock: Number(matchedVariant?.stock ?? 0),
+        stock: productHasConversion
+          ? Number((p as Producto & { stock?: number }).stock ?? 0)
+          : Number((matchedVariant as VariantMatch & { stock_decimal?: number })?.stock_decimal ?? matchedVariant?.stock ?? 0),
         codigo: String(matchedVariant?.sku || '')
       } as Producto;
     };
@@ -368,7 +599,6 @@ export default function NuevaVenta() {
     }
 
     if (!productoEncontrado) {
-      console.log("No encontrado:", codigo);
       return false;
     }
 
@@ -453,13 +683,13 @@ export default function NuevaVenta() {
     setShowSuggestions(true);
   }, [busqueda, procesarCodigo, searchProductos, packs]);
 
-  // detector de scanner real (teclado rÃ¡pido + ENTER)
+  // detector de scanner real (teclado rápido + ENTER)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const key = e.key;
       const active = document.activeElement as HTMLElement | null;
       const isInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT' || active.isContentEditable);
-      const isBarcodeInput = isInput && active instanceof HTMLInputElement && active.placeholder?.includes('Escanea o ingresa cÃ³digo de barra');
+      const isBarcodeInput = isInput && active instanceof HTMLInputElement && active.placeholder?.includes('Escanea o ingresa código de barra');
 
       // ignorar teclas especiales
       if (key === 'Shift' || key === 'Control' || key === 'Alt' || key === 'Meta') return;
@@ -486,7 +716,7 @@ export default function NuevaVenta() {
         return;
       }
 
-      // solo nÃºmeros
+      // solo números
       if (/^[0-9]$/.test(key)) {
         if (isInput && !isBarcodeInput) return; // dejamos escribir cantidades y pagos normales
 
@@ -513,20 +743,110 @@ export default function NuevaVenta() {
 
 
   // acciones de venta
+  const registrarIngresoEnCaja = useCallback(async (venta: VentaCajaPayload) => {
+    try {
+      const modo = String(venta?.modo_pago || "").toLowerCase();
+      const payment_method =
+        modo === "efectivo"
+          ? "cash"
+          : modo === "qr"
+            ? "qr"
+            : modo === "tarjeta"
+              ? "card"
+            : modo === "transferencia"
+              ? "transfer"
+              : "other";
+
+      const amount = Number(venta?.total || 0);
+      if (!Number.isFinite(amount) || amount <= 0) return;
+
+      const saleDate = String(venta?.fecha || "").slice(0, 10) || new Date().toISOString().slice(0, 10);
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) return;
+
+      const response = await fetch('/api/cash/movements', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          date: saleDate,
+          type: 'income',
+          payment_method,
+          amount,
+          description: `Ingreso automatico por venta #${venta?.id}`,
+          cashbox_id: 'main',
+        }),
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.error || 'No se pudo registrar el ingreso automatico en caja');
+      }
+    } catch (cashError) {
+      // No bloqueamos la venta por un error de sincronizacion de caja.
+      console.error('No se pudo registrar ingreso automatico en caja:', cashError);
+      showToast('La venta se guardo, pero no se pudo reflejar en flujo de caja automaticamente.', 'info');
+    }
+  }, []);
 
   const efectivizarVenta = useCallback(async () => {
       // ...existing code...
     if (carrito.length === 0) { showToast('El carrito esta vacio', 'error'); return; }
     if (!pagos[0].metodo || pagos[0].monto <= 0) { showToast('Selecciona al menos un método de pago y monto', 'error'); return; }
     if (mostrarSegundoPago && (!pagos[1].metodo || pagos[1].monto <= 0)) { showToast('Completa el segundo método de pago y monto', 'error'); return; }
-    if (sumaPagos < totalCobrar) { showToast('La suma de los pagos es insuficiente', 'error'); return; }
+    if (sumaPagos + 0.009 < totalCobrar) { showToast('La suma de los pagos es insuficiente', 'error'); return; }
     if (!tienePagoEnEfectivo && sumaPagos > totalCobrar + 0.01) { showToast('La suma de los pagos supera el total', 'error'); return; }
     if (cliente.requiereFactura && (!cliente.nombre.trim() || !cliente.nit.trim())) { showToast('Completa los datos de facturacion (nombre y NIT)', 'error'); return; }
 
     setEfectivizando(true);
+    let ventaCreadaId: string | number | null = null;
+    const stockSnapshots: Array<
+      | { type: 'product'; productId: string | number; stock: number }
+      | { type: 'variant'; variantId: string | number; stock: number; productId?: string | number; productStock?: number }
+    > = [];
+
+    const rollbackVenta = async () => {
+      if (!ventaCreadaId) return;
+      const ventaId = ventaCreadaId;
+      const errors: string[] = [];
+
+      for (const snapshot of [...stockSnapshots].reverse()) {
+        if (snapshot.type === 'variant') {
+          const { error } = await ventasService.establecerStockVariante(snapshot.variantId, snapshot.stock);
+          if (error) errors.push(`stock variante ${snapshot.variantId}: ${error.message || String(error)}`);
+          if (snapshot.productId != null && snapshot.productStock != null) {
+            const { error: productError } = await ventasService.establecerStockProducto(snapshot.productId, snapshot.productStock);
+            if (productError) errors.push(`stock producto ${snapshot.productId}: ${productError.message || String(productError)}`);
+          }
+        } else {
+          const { error } = await ventasService.establecerStockProducto(snapshot.productId, snapshot.stock);
+          if (error) errors.push(`stock producto ${snapshot.productId}: ${error.message || String(error)}`);
+        }
+      }
+
+      const cleanupSteps = [
+        supabase.from('stock_movimientos').delete().ilike('observaciones', `%venta #${ventaId}%`),
+        supabase.from('ventas_pagos').delete().eq('venta_id', ventaId),
+        supabase.from('ventas_detalle').delete().eq('venta_id', ventaId),
+        supabase.from('ventas').delete().eq('id', ventaId),
+      ];
+      for (const step of cleanupSteps) {
+        const { error } = await step;
+        if (error) errors.push(error.message || String(error));
+      }
+
+      if (errors.length > 0) {
+        console.error('Rollback de venta incompleto:', errors);
+        showToast('La venta fallo y se intento revertir, pero revisa la base de datos.', 'error');
+      }
+    };
+
     try {
       // Obtener token y usuario solo una vez
-      const supabase = getSupabaseClient();
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token;
       const userId = sessionData?.session?.user?.id || null;
@@ -536,27 +856,105 @@ export default function NuevaVenta() {
       const packsIds = carrito.filter(p => p.tipo === 'pack' && p.pack_id).map(p => String(p.pack_id));
 
       // 2. Consultar productos y variantes desde la base de datos
-      let productosDB: any[] = [];
+      let productosDB: ProductoDB[] = [];
       if (productosIds.length > 0) {
-        const supabase = getSupabaseClient();
-        const { data: productosData, error: productosError } = await supabase
+        let productosQuery = supabase
           .from('productos')
-          .select('user_id, nombre, precio, precio_compra, stock, categoria, codigo_barra, producto_variantes ( id, color, precio, stock, sku )')
+          .select('user_id, nombre, precio, precio_compra, stock, categoria, codigo_barra, unidad_base, unidades_alternativas, factor_conversion, producto_variantes ( id, color, precio, stock, stock_decimal, sku )')
           .in('user_id', productosIds);
+        if (activeSucursalId) productosQuery = productosQuery.eq('sucursal_id', activeSucursalId);
+        const { data: productosData, error: productosError } = await productosQuery;
         if (productosError) throw productosError;
         productosDB = Array.isArray(productosData) ? productosData : [];
       }
 
       // 3. Consultar packs y sus productos desde la base de datos
-      let packsDB: any[] = [];
+      let packsDB: PackDB[] = [];
       if (packsIds.length > 0) {
-        const supabase = getSupabaseClient();
-        const { data: packsData, error: packsError } = await supabase
+        let packsQuery = supabase
           .from('packs')
-          .select('*, pack_productos ( cantidad, producto_id, variante_id, productos!pack_productos_producto_id_fkey ( user_id, nombre, precio, categoria, stock, producto_variantes ( id, color, precio, stock, sku ) ) )')
+          .select('*, pack_productos ( cantidad, producto_id, variante_id, productos!pack_productos_producto_id_fkey ( user_id, nombre, precio, categoria, stock, producto_variantes ( id, color, precio, stock, stock_decimal, sku ) ) )')
           .in('id', packsIds);
+        if (activeSucursalId) packsQuery = packsQuery.eq('sucursal_id', activeSucursalId);
+        const { data: packsData, error: packsError } = await packsQuery;
         if (packsError) throw packsError;
         packsDB = Array.isArray(packsData) ? packsData : [];
+      }
+
+      const stockRequests = new Map<string, StockRequest>();
+      const addStockRequest = (key: string, request: StockRequest) => {
+        const current = stockRequests.get(key);
+        if (current) {
+          current.solicitado += request.solicitado;
+          return;
+        }
+        stockRequests.set(key, request);
+      };
+
+      for (const p of carrito) {
+        const cantidadBase = normalizeQuantity(p.cantidad_base ?? p.cantidad ?? 1);
+        if (cantidadBase <= 0) throw new Error(`Cantidad invalida para ${p.nombre || 'producto'}`);
+
+        if (p.tipo === 'pack') {
+          const pack = packsDB.find(pk => String(pk.id) === String(p.pack_id));
+          if (!pack) throw new Error('Pack no encontrado en base de datos');
+
+          for (const item of pack.pack_productos ?? []) {
+            const productoPack = item.productos;
+            if (!productoPack?.user_id) throw new Error('Producto de pack no encontrado en base de datos');
+            const cantidadTotal = normalizeQuantity(item.cantidad) * cantidadBase;
+            if (item.variante_id) {
+              const variante = productoPack.producto_variantes?.find((v: { id?: string | number }) => String(v.id) === String(item.variante_id));
+              if (!variante) throw new Error(`Variante de pack no encontrada para ${productoPack.nombre || 'producto'}`);
+              addStockRequest(`var:${String(variante.id)}`, {
+                nombre: productoPack.nombre || 'Producto',
+                color: variante.color || null,
+                disponible: getVariantStock(variante),
+                solicitado: cantidadTotal
+              });
+            } else {
+              addStockRequest(`prod:${String(productoPack.user_id)}`, {
+                nombre: productoPack.nombre || 'Producto',
+                color: null,
+                disponible: getProductStock(productoPack),
+                solicitado: cantidadTotal
+              });
+            }
+          }
+          continue;
+        }
+
+        if (p.user_id == null) throw new Error('Producto invalido en carrito');
+        const productoCompleto = productosDB.find(prod => String(prod.user_id) === String(p.user_id));
+        if (!productoCompleto) throw new Error(`Producto no encontrado en base de datos: ${p.nombre || p.user_id}`);
+        const cantidadBaseVenta = getSaleBaseQuantity(p, productoCompleto);
+
+        if (p.variante_id) {
+          const variante = (productoCompleto.producto_variantes || []).find((v) => String(v.id) === String(p.variante_id));
+          if (!variante) throw new Error(`Color no encontrado para ${productoCompleto.nombre || p.nombre}`);
+          addStockRequest(`var:${String(variante.id)}`, {
+            nombre: productoCompleto.nombre || p.nombre || 'Producto',
+            color: variante.color || p.color || null,
+            disponible: getStockForVariantSale(productoCompleto, variante),
+            solicitado: cantidadBaseVenta
+          });
+        } else {
+          addStockRequest(`prod:${String(productoCompleto.user_id)}`, {
+            nombre: productoCompleto.nombre || p.nombre || 'Producto',
+            color: null,
+            disponible: getProductStock(productoCompleto),
+            solicitado: cantidadBaseVenta
+          });
+        }
+      }
+
+      for (const request of stockRequests.values()) {
+        if (request.solicitado > request.disponible + 0.0001) {
+          throw new Error(
+            `Stock insuficiente para ${request.nombre}${request.color ? ` color ${request.color}` : ''} ` +
+            `(stock=${formatStockQuantity(request.disponible)}, solicitado=${formatStockQuantity(request.solicitado)})`
+          );
+        }
       }
 
       // 4. Armar objeto de costos extra
@@ -590,8 +988,11 @@ export default function NuevaVenta() {
         usuario_email: userEmail,
         descuentos: totalDescuento,
         costos_extra
+        ,
+        sucursal_id: activeSucursalId || undefined
       });
       if (ventaError || !venta) throw ventaError || new Error('no venta');
+      ventaCreadaId = venta.id as string | number;
 
       // Guardar pagos en ventas_pagos
       // Definir saleDate después de crear venta
@@ -604,6 +1005,7 @@ export default function NuevaVenta() {
           monto: pagoObj.monto,
           metodo_pago: pagoObj.metodo,
           usuario_email: userEmail,
+          sucursal_id: activeSucursalId || undefined,
           created_at: new Date().toISOString(),
         };
         (Object.keys(pagoVenta) as Array<keyof typeof pagoVenta>).forEach(k => {
@@ -613,9 +1015,13 @@ export default function NuevaVenta() {
       }
 
       // 7. Insertar detalles robustos
-      await Promise.all(carrito.map(async (p) => {
-        const cantidad = p.cantidad ?? 1;
+      for (const p of carrito) {
+        const cantidadVisible = Number(p.cantidad_display ?? p.cantidad ?? 1);
+        const unidadVenta = String(p.unidad || p.unidad_base || 'unidad');
+        const unidadBaseVenta = String(p.unidad_base || unidadVenta || 'unidad');
         if (p.tipo === 'pack') {
+          const cantidadBase = Number(p.cantidad_base ?? p.cantidad ?? 1);
+          const cantidadDetalle = toIntegerDetailQuantity(cantidadBase);
           // Buscar pack completo en DB
           const pack = packsDB.find(pk => String(pk.id) === String(p.pack_id));
           if (!pack) throw new Error('Pack no encontrado en base de datos');
@@ -623,7 +1029,9 @@ export default function NuevaVenta() {
           const { error: detallePackError } = await ventasService.insertarVentaDetalle({
             venta_id: venta.id,
             producto_id: null, // always null for packs
-            cantidad,
+            cantidad: cantidadDetalle,
+            cantidad_base: cantidadBase,
+            unidad: unidadBaseVenta,
             precio_unitario: pack.precio_pack,
             costo_unitario: 0,
             color: null,
@@ -631,13 +1039,15 @@ export default function NuevaVenta() {
             tipo: 'pack',
             pack_id: pack.id,
             created_at: new Date().toISOString(),
+            sucursal_id: activeSucursalId || undefined,
             usuario_email: userEmail
           });
           if (detallePackError) throw detallePackError;
           // Descontar stock de cada producto del pack
-          await Promise.all((pack.pack_productos ?? []).map(async (item: PackProduct) => {
-            const cantidadTotal = item.cantidad * cantidad;
+          for (const item of pack.pack_productos ?? []) {
+            const cantidadTotal = normalizeQuantity(item.cantidad) * cantidadBase;
             const productoPack = item.productos;
+            if (!productoPack?.user_id) throw new Error('Producto de pack no encontrado en base de datos');
             // Si el producto tiene variante, descontar stock de variante
             if (item.variante_id) {
               const variante = productoPack.producto_variantes?.find(v => String(v.id) === String(item.variante_id));
@@ -647,32 +1057,96 @@ export default function NuevaVenta() {
                 // Después de descontar stock de la variante, actualizar el stock total del producto
                 // 1. Descontar stock de la variante (debería implementarse en ventasService)
                 // 2. Recalcular y actualizar el stock total del producto
+                if (variante.id == null) throw new Error(`Variante de pack sin ID para ${productoPack.nombre || 'producto'}`);
+                const stockEsperado = getVariantStock(variante) - cantidadTotal;
+                stockSnapshots.push({
+                  type: 'variant',
+                  variantId: variante.id,
+                  stock: getVariantStock(variante),
+                  productId: productoPack.user_id,
+                  productStock: getProductStock(productoPack),
+                });
+                const { error: stockPackVarianteError } = await ventasService.establecerStockVariante(variante.id, stockEsperado);
+                if (stockPackVarianteError) throw stockPackVarianteError;
+                const { error: movPackVarianteError } = await supabase.from('stock_movimientos').insert([{
+                  producto_id: productoPack.user_id,
+                  variante_id: variante.id,
+                  tipo: 'venta',
+                  cantidad: cantidadTotal,
+                  unidad: 'unidad',
+                  cantidad_base: cantidadTotal,
+                  usuario_id: userId,
+                  usuario_email: userEmail,
+                  sucursal_id: activeSucursalId || undefined,
+                  observaciones: `Salida automatica por venta #${venta.id}`
+                }]);
+                if (movPackVarianteError) throw movPackVarianteError;
                 await actualizarStockTotalProducto(productoPack.user_id);
               }
             } else {
-              const { error: stockPackError } = await ventasService.descontarStock(productoPack.user_id, cantidadTotal);
+              const stockEsperado = getProductStock(productoPack) - cantidadTotal;
+              stockSnapshots.push({
+                type: 'product',
+                productId: productoPack.user_id,
+                stock: getProductStock(productoPack),
+              });
+              const { error: stockPackError } = await ventasService.establecerStockProducto(productoPack.user_id, stockEsperado);
               if (stockPackError) throw stockPackError;
+              const { error: movPackError } = await supabase.from('stock_movimientos').insert([{
+                producto_id: productoPack.user_id,
+                variante_id: null,
+                tipo: 'venta',
+                cantidad: cantidadTotal,
+                unidad: 'unidad',
+                cantidad_base: cantidadTotal,
+                usuario_id: userId,
+                usuario_email: userEmail,
+                sucursal_id: activeSucursalId || undefined,
+                observaciones: `Salida automatica por venta #${venta.id}`
+              }]);
+              if (movPackError) throw movPackError;
               // Actualizar el stock total del producto
               await actualizarStockTotalProducto(productoPack.user_id);
             }
-          }));
+          }
         } else {
           // Buscar producto completo en DB
           // Ignore items with user_id: null (should only be for packs)
-          if (p.user_id == null) return;
+          if (p.user_id == null) continue;
           const productoCompleto = productosDB.find(prod => String(prod.user_id) === String(p.user_id));
           if (!productoCompleto) throw new Error('Producto no encontrado en base de datos');
+          const cantidadBase = getSaleBaseQuantity(p, productoCompleto);
+          const cantidadDetalle = toIntegerDetailQuantity(cantidadBase);
           let variante = null;
           if (p.variante_id) {
             variante = (productoCompleto.producto_variantes || []).find((v: { id?: string | number }) => String(v.id) === String(p.variante_id));
           }
-          const precioUnitario = variante?.precio ?? productoCompleto.precio;
+          const precioUnitario = Number(p.precio ?? variante?.precio ?? productoCompleto.precio ?? 0);
           const costoUnitario = productoCompleto.precio_compra || 0;
-          const descripcionItem = `${productoCompleto.nombre}${variante?.color ? ` ${variante.color}` : p.color ? ` ${p.color}` : ''}`.trim();
+          const descripcionItem = `${productoCompleto.nombre}${variante?.color ? ` ${variante.color}` : p.color ? ` ${p.color}` : ''}${unidadVenta !== unidadBaseVenta ? ` (${cantidadVisible} ${unidadVenta} = ${formatStockQuantity(cantidadBase)} ${unidadBaseVenta})` : ''}`.trim();
+          let stockSnapshotRegistrado = false;
+          if (variante?.id && shouldUseProductStockForVariant(productoCompleto)) {
+            stockSnapshots.push({
+              type: 'variant',
+              variantId: variante.id,
+              stock: getStockForVariantSale(productoCompleto, variante),
+              productId: productoCompleto.user_id,
+              productStock: getProductStock(productoCompleto),
+            });
+            stockSnapshotRegistrado = true;
+            const stockLegacyDisponible = Number(variante.stock || 0);
+            const stockLegacyNecesario = Math.ceil(Math.max(1, cantidadVisible));
+            if (stockLegacyDisponible < stockLegacyNecesario) {
+              const { error: legacyStockError } = await ventasService.establecerStockLegacyVariante(variante.id, stockLegacyNecesario);
+              if (legacyStockError) throw legacyStockError;
+            }
+          }
           const { error: detalleProductoError } = await ventasService.insertarVentaDetalle({
             venta_id: venta.id,
             producto_id: productoCompleto.user_id,
-            cantidad,
+            cantidad: cantidadVisible,
+            cantidad_base: cantidadBase,
+            unidad: unidadVenta,
             precio_unitario: precioUnitario,
             costo_unitario: costoUnitario,
             variante_id: variante?.id || null,
@@ -680,16 +1154,63 @@ export default function NuevaVenta() {
             descripcion: descripcionItem,
             tipo: 'producto',
             created_at: new Date().toISOString(),
+            sucursal_id: activeSucursalId || undefined,
             usuario_email: userEmail
           });
           if (detalleProductoError) throw detalleProductoError;
-          // Descontar stock
-          const { error: stockProductoError } = await ventasService.descontarStock(productoCompleto.user_id, cantidad);
-          if (stockProductoError) throw stockProductoError;
+          if (variante?.id) {
+            const stockEsperado = getStockForVariantSale(productoCompleto, variante) - cantidadBase;
+            if (!stockSnapshotRegistrado) {
+              stockSnapshots.push({
+                type: 'variant',
+                variantId: variante.id,
+                stock: getStockForVariantSale(productoCompleto, variante),
+                productId: productoCompleto.user_id,
+                productStock: getProductStock(productoCompleto),
+              });
+            }
+            const { error: stockVarianteError } = await ventasService.establecerStockVariante(variante.id, stockEsperado);
+            if (stockVarianteError) throw stockVarianteError;
+            const { error: movVarianteError } = await supabase.from('stock_movimientos').insert([{
+              producto_id: productoCompleto.user_id,
+              variante_id: variante.id,
+              tipo: 'venta',
+              cantidad: cantidadVisible,
+              unidad: unidadVenta,
+              cantidad_base: cantidadBase,
+              usuario_id: userId,
+              usuario_email: userEmail,
+              sucursal_id: activeSucursalId || undefined,
+              observaciones: `Salida automatica por venta #${venta.id}`
+            }]);
+            if (movVarianteError) throw movVarianteError;
+          } else {
+            const stockEsperado = getProductStock(productoCompleto) - cantidadBase;
+            stockSnapshots.push({
+              type: 'product',
+              productId: productoCompleto.user_id,
+              stock: getProductStock(productoCompleto),
+            });
+            const { error: stockProductoError } = await ventasService.establecerStockProducto(productoCompleto.user_id, stockEsperado);
+            if (stockProductoError) throw stockProductoError;
+            const { error: movProductoError } = await supabase.from('stock_movimientos').insert([{
+              producto_id: productoCompleto.user_id,
+              variante_id: null,
+              tipo: 'venta',
+              cantidad: cantidadVisible,
+              unidad: unidadVenta,
+              cantidad_base: cantidadBase,
+              usuario_id: userId,
+              usuario_email: userEmail,
+              sucursal_id: activeSucursalId || undefined,
+              observaciones: `Salida automatica por venta #${venta.id}`
+            }]);
+            if (movProductoError) throw movProductoError;
+          }
           // Actualizar el stock total del producto
           await actualizarStockTotalProducto(productoCompleto.user_id);
         }
-      }));
+      }
 
       // --- Función para recalcular y actualizar el stock total del producto ---
       async function actualizarStockTotalProducto(productoId: string | number) {
@@ -697,7 +1218,39 @@ export default function NuevaVenta() {
       }
 
 
-      // ...eliminado: ya no se insertan ingresos automáticos de ventas en cash_movements...
+      // Sincroniza automáticamente ingresos de ventas con flujo de caja, uno por cada método de pago
+      // Usa sessionData, token y saleDate ya definidos arriba
+      for (const pagoObj of pagos) {
+        if (!pagoObj.metodo || pagoObj.monto <= 0) continue;
+        let payment_method = 'other';
+        if (pagoObj.metodo === 'efectivo') payment_method = 'cash';
+        else if (pagoObj.metodo === 'qr') payment_method = 'qr';
+        else if (pagoObj.metodo === 'tarjeta') payment_method = 'other';
+        else if (pagoObj.metodo === 'transferencia') payment_method = 'transfer';
+        if (token) {
+          const response = await fetch('/api/cash/movements', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              date: saleDate.slice(0, 10),
+              type: 'income',
+              payment_method,
+              amount: pagoObj.monto,
+              description: `Ingreso por venta #${venta?.id} (${pagoObj.metodo})`,
+              cashbox_id: 'main',
+              sucursal_id: activeSucursalId || undefined,
+            }),
+          });
+          const payload = await response.json().catch(() => null);
+          if (!response.ok || !payload?.success) {
+            showToast(`Error al registrar en caja: ${payload?.error || 'Error desconocido'}`, 'error');
+            console.error('Error cash_movements:', payload?.error || response.statusText);
+          }
+        }
+      }
 
       // snapshot ticket y imprimir
       const _ticket = {
@@ -721,7 +1274,7 @@ export default function NuevaVenta() {
         cambio
       };
       printerRef.current?.printComprobante();
-      // limpieza de carrito y cliente despuÃ©s de impresiÃ³n
+      // limpieza de carrito y cliente después de impresión
       setCarrito([]);
       setPagos([{ metodo: '', monto: 0 }]);
       // reset costos
@@ -730,6 +1283,7 @@ export default function NuevaVenta() {
       setEfectivizando(false);
       showToast('Venta efectivizada y stock actualizado');
     } catch (err) {
+      await rollbackVenta();
       const errorContext = err && typeof err === 'object'
         ? ['message', 'details', 'hint']
             .map((key) => {
@@ -745,7 +1299,7 @@ export default function NuevaVenta() {
       showToast('Error al crear venta: ' + errorMessage, 'error');
       setEfectivizando(false);
     }
-  }, [carrito, cliente, pagos, cambio, totalCobrar, subtotal, totalDescuento, packs, setCarrito, cambiarCampo, envio, comision, publicidad, rebajas, impuestosCalculados, cobrarImpuestos, tienePagoEnEfectivo]);
+  }, [carrito, cliente, pagos, cambio, totalCobrar, subtotal, totalDescuento, packs, setCarrito, cambiarCampo, envio, comision, publicidad, rebajas, impuestosCalculados, cobrarImpuestos, registrarIngresoEnCaja]);
 
   // ...continued building UI mostly replicates previous layout using components
 
@@ -767,11 +1321,11 @@ export default function NuevaVenta() {
             <div className="mt-4 grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-gray-700">Envio</label>
-                <input type="text" inputMode="decimal" value={formatMoneyInput(envio)} onChange={e=>setEnvio(parseMoneyInput(e.target.value))} className="w-full border p-2 rounded" />
+                <input type="number" step="0.01" min="0" value={envio} onChange={e=>setEnvio(parsePositiveNumber(e.target.value))} className="w-full border p-2 rounded" />
               </div>
               <div>
                 <label className="block text-gray-700">Comision</label>
-                <input type="text" inputMode="decimal" value={formatMoneyInput(comision)} onChange={e=>setComision(parseMoneyInput(e.target.value))} className="w-full border p-2 rounded" />
+                <input type="number" step="0.01" min="0" value={comision} onChange={e=>setComision(parsePositiveNumber(e.target.value))} className="w-full border p-2 rounded" />
               </div>
               <div>
                 <label className="block text-gray-700">Impuestos</label>
@@ -779,11 +1333,11 @@ export default function NuevaVenta() {
               </div>
               <div>
                 <label className="block text-gray-700">Publicidad</label>
-                <input type="text" inputMode="decimal" value={formatMoneyInput(publicidad)} onChange={e=>setPublicidad(parseMoneyInput(e.target.value))} className="w-full border p-2 rounded" />
+                <input type="number" step="0.01" min="0" value={publicidad} onChange={e=>setPublicidad(parsePositiveNumber(e.target.value))} className="w-full border p-2 rounded" />
               </div>
               <div>
                 <label className="block text-gray-700">Rebajas</label>
-                <input type="text" inputMode="decimal" value={formatMoneyInput(rebajas)} onChange={e=>setRebajas(parseMoneyInput(e.target.value))} className="w-full border p-2 rounded" />
+                <input type="number" step="0.01" min="0" value={rebajas} onChange={e=>setRebajas(parsePositiveNumber(e.target.value))} className="w-full border p-2 rounded" />
               </div>
             </div>
             <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-800">
@@ -795,22 +1349,14 @@ export default function NuevaVenta() {
               />
               Cobrar IVA + IT (16% sobre precio final)
             </label>
-            {/* Botón Cotización */}
-            {carrito.length > 0 && (
-              <div className="flex mt-4">
-                <button
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg text-lg"
-                  type="button"
-                  onClick={() => {
-                    printerRef.current?.printComprobante({
-                      cotizacion: true // para distinguir en el comprobante si se requiere
-                    });
-                  }}
-                >
-                  Imprimir cotización
-                </button>
-              </div>
-            )}
+            <button
+              type="button"
+              onClick={() => printerRef.current?.printCotizacion()}
+              className="mt-6 w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-3 rounded-lg text-base disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={efectivizando || carrito.length === 0}
+            >
+              Imprimir cotización
+            </button>
           </div>
         </div>
         <div className="col-span-2 p-6">
@@ -838,16 +1384,13 @@ export default function NuevaVenta() {
                   </button>
                 ))}
                 <input
-                  type="text"
-                  inputMode="decimal"
-                  pattern="[0-9]*[.,]?[0-9]*"
+                  type="number"
+                  min={0}
+                  step={0.01}
                   className="w-40 border border-gray-900 bg-white text-gray-900 rounded px-3 py-2 placeholder-gray-700 focus:border-gray-900 focus:ring focus:ring-gray-900/30"
                   placeholder="Monto"
-                  value={formatMoneyInput(Number(pagos[idx]?.monto || 0))}
-                  onChange={e => {
-                    const val = parseMoneyInput(e.target.value);
-                    setPagos(p => p.map((pago, i) => i === idx ? { ...pago, monto: val } : pago));
-                  }}
+                  value={pagos[idx]?.monto ?? ''}
+                  onChange={e => setPagos(p => p.map((pago, i) => i === idx ? { ...pago, monto: parsePositiveNumber(e.target.value) } : pago))}
                 />
                 {idx === 0 && (
                   <span className="text-sm text-gray-700">Cambio: <span className={cambio < 0 ? 'text-red-700' : 'text-green-700'}>Bs {cambio.toFixed(2)}</span></span>
@@ -902,6 +1445,7 @@ export default function NuevaVenta() {
               setBusqueda('');
               setPackResults([]);
             }}
+            promociones={promociones}
           />
 
           <CarritoPanel
@@ -909,6 +1453,7 @@ export default function NuevaVenta() {
             imagenes={imagenes}
             quitar={quitar}
             cambiarCantidad={cambiarCantidad}
+            cambiarUnidadYCantidad={cambiarUnidadYCantidad}
             subtotal={subtotal}
             totalDescuento={totalDescuento}
             total={total}
@@ -916,7 +1461,7 @@ export default function NuevaVenta() {
             comision={comision}
             publicidad={publicidad}
             rebajas={rebajas}
-            impuestos={Number(impuestosCalculados.toFixed(2))}
+            impuestos={impuestosCalculados}
             totalCobrar={totalCobrar}
             modoPago={pagos.map(p=>p.metodo).join(' + ')}
             pago={sumaPagos}
@@ -960,7 +1505,7 @@ export default function NuevaVenta() {
         <>
           <div className="fixed inset-0 pointer-events-none flex items-center justify-center z-50">
             <div className="bg-green-500/90 text-white px-6 py-3 rounded-xl text-xl font-bold shadow-2xl animate-pulse">
-              âœ” Producto agregado
+              ✔ Producto agregado
             </div>
           </div>
           <div className="fixed inset-0 bg-green-400/20 z-40 pointer-events-none" />
@@ -991,5 +1536,3 @@ export default function NuevaVenta() {
     </div>
   );
 }
-
-

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { getSupabaseClient } from "../../../lib/SupabaseClient";
+import { supabase } from "../../../lib/SupabaseClient";
 
 export default function PerfilesAdminPage() {
   const [user, setUser] = useState(null);
@@ -20,14 +20,12 @@ export default function PerfilesAdminPage() {
 
   useEffect(() => {
     const getUser = async () => {
-      const supabase = getSupabaseClient();
       const { data } = await supabase.auth.getUser();
       
       if (data?.user) {
         setUser(data.user);
         
         // Verificar si es admin
-        const supabase = getSupabaseClient();
         const { data: perfilData } = await supabase
           .from('perfiles')
           .select('*')
@@ -46,7 +44,6 @@ export default function PerfilesAdminPage() {
   }, []);
 
   const cargarPerfiles = async () => {
-    const supabase = getSupabaseClient();
     const { data } = await supabase
       .from('perfiles')
       .select('*')
@@ -70,7 +67,6 @@ export default function PerfilesAdminPage() {
 
     setProcesando(editingProfile);
     try {
-      const supabase = getSupabaseClient();
       const { error } = await supabase
         .from('perfiles')
         .update({
@@ -108,7 +104,6 @@ export default function PerfilesAdminPage() {
 
   const resetearPassword = async (email) => {
     setProcesando(email);
-    const supabase = getSupabaseClient();
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/reset-password`
     });
@@ -129,7 +124,6 @@ export default function PerfilesAdminPage() {
 
     setProcesando(perfilId);
     try {
-      const supabase = getSupabaseClient();
       const { error } = await supabase
         .from('perfiles')
         .delete()

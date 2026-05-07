@@ -65,7 +65,7 @@ function isWithinDateRange(dateValue, from, to) {
   return true;
 }
 
-export function useVentasDashboard() {
+export function useVentasDashboard(sucursalId = null) {
   const [ventas, setVentas] = useState([]);
   const [detallesPorVenta, setDetallesPorVenta] = useState({});
   const [productMap, setProductMap] = useState({});
@@ -81,21 +81,25 @@ export function useVentasDashboard() {
       setLoading(true);
       setError('');
       try {
-        const { data: ventasData, error: ventasError } = await supabase
+        let ventasQuery = supabase
           .from('ventas')
           .select('id, cliente_nombre, total, fecha, descuentos, costos_extra, modo_pago')
           .order('fecha', { ascending: false });
+        if (sucursalId) ventasQuery = ventasQuery.eq('sucursal_id', sucursalId);
+        const { data: ventasData, error: ventasError } = await ventasQuery;
 
         if (ventasError) throw ventasError;
 
         const safeVentas = Array.isArray(ventasData) ? ventasData : [];
 
         let detallesData = [];
-        const detalleEnriquecido = await supabase
+        let detalleQuery = supabase
           .from('ventas_detalle')
           .select(`
             venta_id,
             cantidad,
+            cantidad_base,
+            unidad,
             precio_unitario,
             costo_unitario,
             color,
@@ -110,11 +114,15 @@ export function useVentasDashboard() {
               nombre
             )
           `);
+        if (sucursalId) detalleQuery = detalleQuery.eq('sucursal_id', sucursalId);
+        const detalleEnriquecido = await detalleQuery;
 
         if (detalleEnriquecido.error) {
-          const detalleFallback = await supabase
+          let fallbackQuery = supabase
             .from('ventas_detalle')
             .select('*');
+          if (sucursalId) fallbackQuery = fallbackQuery.eq('sucursal_id', sucursalId);
+          const detalleFallback = await fallbackQuery;
           if (detalleFallback.error) throw detalleEnriquecido.error;
           detallesData = detalleFallback.data || [];
         } else {
@@ -140,10 +148,12 @@ export function useVentasDashboard() {
         let products = [];
         if (productIds.size > 0) {
           const ids = Array.from(productIds);
-          const { data: productsData, error: productsError } = await supabase
+          let productsQuery = supabase
             .from('productos')
-            .select('user_id, nombre, precio_compra')
+            .select('user_id, nombre, precio_compra, unidad_base, unidades_alternativas, factor_conversion')
             .in('user_id', ids);
+          if (sucursalId) productsQuery = productsQuery.eq('sucursal_id', sucursalId);
+          const { data: productsData, error: productsError } = await productsQuery;
 
           if (productsError) throw productsError;
           products = Array.isArray(productsData) ? productsData : [];
@@ -170,7 +180,7 @@ export function useVentasDashboard() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [sucursalId]);
 
   const salesRows = useMemo(() => {
     return ventas
@@ -184,9 +194,9 @@ export function useVentasDashboard() {
         let cantidadProductos = 0;
 
         details.forEach((item) => {
-          const qty = toNumber(item?.cantidad || 0);
+          const qtyDisplayRaw = toNumber(item?.cantidad || 0);
+          const qtyBase = toNumber(item?.cantidad_base || 0) || qtyDisplayRaw;
           const precioUnitario = toNumber(item?.precio_unitario || 0);
-          const ingreso = precioUnitario * qty;
 
           const productInfo = productMap[item?.producto_id] || null;
           const costoUnitarioDetalle = item?.costo_unitario;
@@ -196,7 +206,24 @@ export function useVentasDashboard() {
               ? 0
               : toNumber(productInfo?.precio_compra || 0);
 
-          const costo = costoUnitario * qty;
+          const factorConversion = toNumber(productInfo?.factor_conversion || 0);
+          const unidadBase = String(productInfo?.unidad_base || '').trim();
+          const unidadDetalle = String(item?.unidad || '').trim();
+          const unidadAlternativa = Array.isArray(productInfo?.unidades_alternativas)
+            ? String(productInfo.unidades_alternativas[0] || '').trim()
+            : '';
+          const displayFromBase = qtyBase > 0 && factorConversion > 0 && unidadAlternativa
+            ? qtyBase * factorConversion
+            : qtyBase;
+          const displayUnit = unidadDetalle && unidadDetalle !== unidadBase
+            ? unidadDetalle
+            : (factorConversion > 0 && unidadAlternativa ? unidadAlternativa : unidadDetalle || unidadBase || 'unidad');
+          const qtyDisplay = unidadDetalle && unidadDetalle !== unidadBase
+            ? qtyDisplayRaw || displayFromBase
+            : displayFromBase || qtyDisplayRaw;
+
+          const ingreso = precioUnitario * qtyBase;
+          const costo = costoUnitario * qtyBase;
           const gananciaItem = ingreso - costo;
 
           const itemName =
@@ -210,7 +237,9 @@ export function useVentasDashboard() {
 
           items.push({
             nombre: itemName,
-            cantidad: qty,
+            cantidad: qtyDisplay,
+            cantidadBase: qtyBase,
+            unidad: displayUnit,
             precio: precioUnitario,
             costo,
             costoUnitario,
@@ -223,7 +252,7 @@ export function useVentasDashboard() {
 
           ingresosItems += ingreso;
           costoItems += costo;
-          cantidadProductos += qty;
+          cantidadProductos += qtyDisplay;
         });
 
         const extraCosts = normalizeExtraCosts(venta?.costos_extra);
@@ -240,7 +269,8 @@ export function useVentasDashboard() {
           const cantidad = toNumber(item?.cantidad || 0);
           const nombre = String(item?.nombre || 'producto').trim();
           const color = String(item?.color || '').trim();
-          return `${cantidad} ${nombre}${color ? ` ${color}` : ''}`;
+          const unidad = String(item?.unidad || '').trim();
+          return `${cantidad} ${unidad ? `${unidad} de ` : ''}${nombre}${color ? ` ${color}` : ''}`;
         });
         const resumenCompra = resumenItems.length > 0
           ? `${cliente} compro ${joinWithY(resumenItems)}`

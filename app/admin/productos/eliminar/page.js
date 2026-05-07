@@ -1,17 +1,18 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
-import { getSupabaseClient } from "../../../../lib/SupabaseClient";
+import { supabase } from "../../../../lib/SupabaseClient";
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "../../../../components/ui/card";
 import { Button } from "../../../../components/ui/button";
 
 
 import { registrarMovimientoStock } from "../../../../lib/stockMovimientos";
-import { showToast } from "../../../../components/ui/Toast";
 import { registrarHistorialProducto } from "../../../../lib/productosHistorial";
 import { getOptimizedImageUrl, buildImageSrcSet } from "../../../../lib/imageOptimization";
+import { useSucursalActiva } from "../../../../components/admin/SucursalContext";
 
 
 function EliminarProductos(props) {
+  const { activeSucursalId } = useSucursalActiva();
   const [productos, setProductos] = useState([]);
   const [imagenes, setImagenes] = useState({});
   const [eliminando, setEliminando] = useState(null);
@@ -22,20 +23,22 @@ function EliminarProductos(props) {
 
   useEffect(() => {
     async function fetchProductos() {
-      const supabase = getSupabaseClient();
-      const { data, error } = await supabase
+      let query = supabase
         .from("productos")
         .select("user_id, nombre, precio, stock, categoria, created_at");
+      if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+      const { data, error } = await query;
       if (!error && data) {
         setProductos(data);
         // Obtener imágenes
         const ids = data.map(p => p.user_id);
         if (ids.length > 0) {
-          const supabase = getSupabaseClient();
-          const { data: imgs } = await supabase
+          let imgsQuery = supabase
             .from("producto_imagenes")
             .select("producto_id, imagen_url")
             .in("producto_id", ids);
+          if (activeSucursalId) imgsQuery = imgsQuery.eq("sucursal_id", activeSucursalId);
+          const { data: imgs } = await imgsQuery;
           if (imgs) {
             const agrupadas = {};
             imgs.forEach(img => {
@@ -48,85 +51,51 @@ function EliminarProductos(props) {
       }
     }
     fetchProductos();
-  }, [eliminando]);
+  }, [eliminando, activeSucursalId]);
 
   const eliminarProducto = async (user_id) => {
     if (!window.confirm("¿Seguro que deseas eliminar este producto?")) return;
     setEliminando(user_id);
-    let errorOcurrido = false;
     // Registrar movimiento e historial de eliminación
     try {
-      const supabase = getSupabaseClient();
       const user = (await supabase.auth.getUser())?.data?.user;
       // Buscar el producto para obtener los datos antes de eliminar
-      const { data: prodData } = await supabase.from("productos").select("*").eq("user_id", user_id).single();
+      let prodQuery = supabase.from("productos").select("*").eq("user_id", user_id);
+      if (activeSucursalId) prodQuery = prodQuery.eq("sucursal_id", activeSucursalId);
+      const { data: prodData } = await prodQuery.single();
       const movimientoPayload = {
         producto_id: Number(user_id),
         tipo: 'eliminación',
         cantidad: prodData?.stock || 0,
         usuario_id: user?.id || null,
         usuario_email: user?.email || '',
-        observaciones: 'Eliminación de producto desde panel'
+        observaciones: 'Eliminación de producto desde panel',
+        sucursal_id: activeSucursalId || null
       };
-      const { error: movError } = await registrarMovimientoStock(movimientoPayload);
-      if (movError) {
-        showToast("Error registrando movimiento de stock: " + movError.message, "error");
-        errorOcurrido = true;
-      }
-      const { error: histError } = await registrarHistorialProducto({
+      await registrarMovimientoStock(movimientoPayload);
+      await registrarHistorialProducto({
         producto_id: Number(user_id),
         accion: "DELETE",
         datos_anteriores: prodData,
         datos_nuevos: null,
-        usuario_email: user?.email || null
+        usuario_email: user?.email || null,
+        sucursal_id: activeSucursalId || null
       });
-      if (histError) {
-        showToast("Error registrando historial: " + histError.message, "error");
-        errorOcurrido = true;
-      }
     } catch (err) {
-      showToast('No se pudo registrar movimiento/historial de eliminación: ' + (err?.message || err), "error");
-      errorOcurrido = true;
+      console.warn('No se pudo registrar movimiento/historial de eliminación:', err);
     }
     // Eliminar primero dependencias para evitar errores 409
-    const dependencias = [
-      "stock_movimientos",
-      "productos_historial",
-      "producto_imagenes",
-      "promociones",
-      "pack_productos",
-      "ventas_detalle"
-    ];
-    const userIdBigInt = Number(user_id);
-    console.log("user_id recibido para eliminar:", user_id, typeof user_id, "userIdBigInt:", userIdBigInt, typeof userIdBigInt);
-    const supabase = getSupabaseClient();
-    const { data: variantesAntes } = await supabase.from("producto_variantes").select("*").eq("producto_id", userIdBigInt);
-    console.log("Variantes antes de borrar:", variantesAntes);
-    // Eliminar variantes primero y mostrar error específico si ocurre
-    const { error: variantesError, data: variantesBorradas } = await supabase.from("producto_variantes").delete().eq("producto_id", userIdBigInt);
-    console.log("Variantes borradas:", variantesBorradas, "Error:", variantesError);
-    if (variantesError) {
-      showToast(`Error eliminando variantes: ${variantesError.message}`, "error");
-      errorOcurrido = true;
-    }
-    for (const tabla of dependencias) {
-      const supabase = getSupabaseClient();
-      const { error } = await supabase.from(tabla).delete().eq("producto_id", user_id);
-      if (error) {
-        showToast(`Error eliminando en ${tabla}: ${error.message}`, "error");
-        errorOcurrido = true;
-      }
-    }
+    const scopeSucursal = (query) => activeSucursalId ? query.eq("sucursal_id", activeSucursalId) : query;
+    await scopeSucursal(supabase.from("stock_movimientos").delete().eq("producto_id", user_id));
+    await scopeSucursal(supabase.from("productos_historial").delete().eq("producto_id", user_id));
+    await scopeSucursal(supabase.from("producto_variantes").delete().eq("producto_id", user_id));
+    await scopeSucursal(supabase.from("producto_imagenes").delete().eq("producto_id", user_id));
+    await scopeSucursal(supabase.from("promociones").delete().eq("producto_id", user_id));
+    await scopeSucursal(supabase.from("pack_productos").delete().eq("producto_id", user_id));
+    await scopeSucursal(supabase.from("ventas_detalle").delete().eq("producto_id", user_id));
     // Finalmente, eliminar el producto
-    const { error: prodError } = await supabase.from("productos").delete().eq("user_id", user_id);
-    if (prodError) {
-      showToast("Error eliminando producto: " + prodError.message, "error");
-      errorOcurrido = true;
-    }
+    await scopeSucursal(supabase.from("productos").delete().eq("user_id", user_id));
     setEliminando(null);
-    if (!errorOcurrido) {
-      showToast("Producto eliminado correctamente.", "success");
-    }
   };
 
   // --- Filtros y ordenamiento ---

@@ -1,5 +1,19 @@
 "use client";
-import React, { useImperativeHandle, forwardRef, useRef } from 'react';
+// Extiende el tipo Window para incluir qz
+declare global {
+  interface Window {
+    qz?: {
+      websocket?: unknown;
+      configs?: {
+        create?: (...args: any[]) => any;
+        [key: string]: unknown;
+      };
+      print?: unknown;
+      [key: string]: unknown;
+    };
+  }
+}
+import React, { useImperativeHandle, forwardRef, useRef, useState } from 'react';
 import jsPDF from 'jspdf';
 import { CONFIG } from '../../lib/config';
 import { fetchStoreSettings } from '../../lib/storeSettings';
@@ -8,7 +22,12 @@ interface TicketItem {
   nombre?: string;
   producto_nombre?: string;
   cantidad?: number;
+  cantidad_base?: number;
+  cantidad_display?: number;
   cant?: number;
+  unidad?: string;
+  unidad_base?: string;
+  factor_conversion?: number;
   precio_unitario?: number;
   precio?: number;
   precio_pack?: number;
@@ -28,13 +47,13 @@ interface TicketItem {
 }
 
 interface TicketSnapshot {
+  tipo_documento?: 'comprobante' | 'cotizacion';
   fecha?: string;
   venta?: { id?: string | number };
   cliente_nombre?: string;
   cliente_nit?: string;
   modo_pago?: string;
   requiere_factura?: boolean;
-  cotizacion?: boolean;
   items?: TicketItem[];
   subtotal?: number;
   descuento?: number;
@@ -72,7 +91,8 @@ interface TicketPrinterProps {
 }
 
 export interface TicketPrinterHandle {
-  printComprobante: (opts?: { cotizacion?: boolean }) => Promise<void>;
+  printComprobante: () => Promise<void>;
+  printCotizacion: () => Promise<void>;
 }
 
 function limpiarTexto(texto?: string) {
@@ -84,6 +104,18 @@ function limpiarTexto(texto?: string) {
 }
 
 function calcularItem(item: TicketItem) {
+  const cantidadBase = Number(item.cantidad_base ?? item.cantidad ?? item.cant ?? 1);
+  const cantidadDisplay = Number(item.cantidad_display ?? item.cantidad ?? item.cant ?? 1);
+  const unidadVenta = String(item.unidad || item.unidad_base || '').trim();
+  const unidadBase = String(item.unidad_base || unidadVenta || '').trim();
+  const factorConversion = Number(item.factor_conversion || 0);
+  const usaUnidadAlternativa =
+    unidadVenta &&
+    unidadBase &&
+    unidadVenta !== unidadBase &&
+    Number.isFinite(factorConversion) &&
+    factorConversion > 0;
+
   const precioOriginal = Number(
     item.precio_original ??
     item.precio_unitario ??
@@ -94,14 +126,26 @@ function calcularItem(item: TicketItem) {
   const descuento = Number(item.descuento_item ?? 0);
 
   const precioFinal = Math.max(precioOriginal - descuento, 0);
-  const precioFinalRedondeado = Number(precioFinal.toFixed(2));
+  const divisorVisual = usaUnidadAlternativa ? factorConversion : 1;
+  const precioOriginalVisual = Number((precioOriginal / divisorVisual).toFixed(2));
+  const descuentoVisual = Number((descuento / divisorVisual).toFixed(2));
+  const precioFinalVisual = Number((precioFinal / divisorVisual).toFixed(2));
+  const cantidadParaTotal = Number.isFinite(cantidadDisplay) && cantidadDisplay > 0 ? cantidadDisplay : cantidadBase;
+  const totalLinea = Number((precioFinalVisual * cantidadParaTotal).toFixed(2));
   const tieneDescuento = descuento > 0;
 
   return {
     ...item,
+    cantidadBase,
+    cantidadDisplay: cantidadParaTotal,
+    unidadVenta,
     precioOriginal,
+    precioOriginalVisual,
     descuento,
-    precioFinal: precioFinalRedondeado,
+    descuentoVisual,
+    precioFinal,
+    precioFinalVisual,
+    totalLinea,
     tieneDescuento
   };
 }
@@ -171,21 +215,17 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
 
     try {
       const branding = await getReceiptBranding();
-      const PAPER_WIDTH = 80; // ancho original para impresora de 80mm
+      const PAPER_WIDTH = 72; // cambia a 58 / 80 si quieres
       const MARGIN = 2;
       const CONTENT_WIDTH = PAPER_WIDTH - MARGIN * 2;
 
       const doc = new jsPDF({ unit: 'mm', format: [PAPER_WIDTH, 340] });
       let y = 6;
+      const esCotizacion = ticketSnapshot.tipo_documento === 'cotizacion';
 
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(9);
-      // Encabezado: si es cotización, mostrarlo
-      if (ticketSnapshot.cotizacion) {
-        doc.text('COTIZACIÓN', PAPER_WIDTH / 2, y, { align: 'center' });
-      } else {
-        doc.text('COMPROBANTE TIENDA', PAPER_WIDTH / 2, y, { align: 'center' });
-      }
+      doc.text(esCotizacion ? 'COTIZACION' : 'COMPROBANTE TIENDA', PAPER_WIDTH / 2, y, { align: 'center' });
       y += 3;
       doc.setFontSize(7);
       doc.text(branding.storeName || 'Tienda', PAPER_WIDTH / 2, y, { align: 'center' });
@@ -203,8 +243,7 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
 
       doc.text(`Fecha: ${ticketSnapshot.fecha || new Date().toLocaleString()}`, MARGIN, y); y += 3;
       doc.text(`Cliente: ${ticketSnapshot.cliente_nombre || '-'}`, MARGIN, y); y += 3;
-      // Solo mostrar método de pago si no es cotización
-      if (!ticketSnapshot.cotizacion) {
+      if (!esCotizacion) {
         doc.text(`Pago: ${ticketSnapshot.modo_pago || '-'}`, MARGIN, y); y += 3;
       }
       doc.line(MARGIN, y, PAPER_WIDTH - MARGIN, y); y += 3;
@@ -223,18 +262,20 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
       for (const rawItem of items) {
         const item = calcularItem(rawItem);
         const nombre = limpiarTexto(item.nombre || item.producto_nombre) || 'Producto';
-        const qty = item.cantidad || item.cant || 1;
-        const descuentoItem = item.descuento;
-        const precioFinal = item.precioFinal;
+        const qty = item.cantidadDisplay || item.cantidad || item.cant || 1;
+        const unidad = item.unidadVenta ? ` ${limpiarTexto(item.unidadVenta)}` : '';
+        const descuentoItem = item.descuentoVisual;
+        const precioFinal = item.precioFinalVisual;
+        const totalLinea = item.totalLinea;
         const promocion = item.promocion || item.promocion_aplicada;
 
-        const itemLabel = `${qty}x ${nombre}${item.color ? ` (${item.color})` : ''}`;
+        const itemLabel = `${qty}${unidad} x ${nombre}${item.color ? ` (${item.color})` : ''}`;
         const itemLines = doc.splitTextToSize(itemLabel, CONTENT_WIDTH - 25);
 
         doc.setFont('courier', 'bold');
         const lineHeight = 2.8; // más compacto
         doc.text(itemLines[0], MARGIN, y);
-        doc.text(`Bs ${precioFinal.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' });
+        doc.text(`Bs ${totalLinea.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' });
         if (itemLines.length > 1) {
           doc.setFont('courier', 'normal');
           for (let i = 1; i < itemLines.length; i++) {
@@ -242,6 +283,10 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
           }
         }
         y += itemLines.length * lineHeight;
+
+        doc.setFont('courier', 'normal');
+        doc.text(`P/U Bs ${precioFinal.toFixed(2)}${unidad ? `/${unidad.trim()}` : ''}`, MARGIN + 2, y);
+        y += 3;
 
         if (item.tieneDescuento) {
           const promoLabel = limpiarTexto(promocion?.descripcion) || 'Promo';
@@ -279,9 +324,15 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
       if (rebajas > 0) { doc.text('REBAJAS', MARGIN, y); doc.text(`-Bs ${rebajas.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 2.5; }
       if (impuestos > 0) { doc.text('IVA+IT (16%)', MARGIN, y); doc.text(`+Bs ${impuestos.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 2.5; }
       doc.text('TOTAL', MARGIN, y); doc.text(`Bs ${total.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 2.5;
-      if (!ticketSnapshot.cotizacion) {
+      if (!esCotizacion) {
         doc.text('PAGO', MARGIN, y); doc.text(`Bs ${pago.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 2.5;
         doc.text('CAMBIO', MARGIN, y); doc.text(`Bs ${cambio.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 4;
+      } else {
+        y += 2;
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6);
+        doc.text('Cotizacion referencial. No registra venta ni descuenta stock.', PAPER_WIDTH / 2, y, { align: 'center' });
+        y += 4;
       }
 
       try {
@@ -291,7 +342,7 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
         const qrCanvasWA = document.createElement('canvas');
         const qrCanvasDigital = document.createElement('canvas');
         const whatsappUrl = branding.whatsappUrl || 'https://wa.me/59177434023?text=Hola%2C%20quiero%20informacion';
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || (typeof window !== 'undefined' ? window.location.origin : 'https://streetwear.example');
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || (typeof window !== 'undefined' ? window.location.origin : 'https://mil-moldes.example');
         const digitalUrl = `${appUrl.replace(/\/+$/, '')}/admin/ventas/comprobante/${ticketSnapshot?.venta?.id || '0000'}`;
 
         await qr.toCanvas(qrCanvasWA, whatsappUrl, { width: 100 });
@@ -317,11 +368,7 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
       }
 
       doc.setFontSize(6);
-      if (ticketSnapshot.cotizacion) {
-        doc.text('Este documento es una cotización/proforma.', PAPER_WIDTH / 2, y, { align: 'center' });
-      } else {
-        doc.text('¡Gracias por su compra!', PAPER_WIDTH / 2, y, { align: 'center' });
-      }
+      doc.text(esCotizacion ? 'Gracias por consultar nuestros precios' : '¡Gracias por su compra!', PAPER_WIDTH / 2, y, { align: 'center' });
       y += 5;
 
       const blob = doc.output('blob');
@@ -393,17 +440,19 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
       lines.push('Cant  Detalle                   Bs');
       lines.push('--------------------------------');
       for (const item of ticketSnapshot?.items || []) {
-        const cantidad = item.cantidad || item.cant || 1;
+        const itemCalc = calcularItem(item);
+        const cantidad = itemCalc.cantidadDisplay || item.cantidad || item.cant || 1;
+        const unidad = itemCalc.unidadVenta ? ` ${limpiarTexto(itemCalc.unidadVenta)}` : '';
         let nombre = item.nombre || item.producto_nombre || 'Producto';
         if (item.color) nombre += ` (${item.color})`;
-        const itemCalc = calcularItem(item);
-        const precioFinal = itemCalc.precioFinal.toFixed(2);
+        const precioFinal = itemCalc.totalLinea.toFixed(2);
         // Ajusta el ancho para que no se corte el nombre
-        let detalle = `${cantidad}`.padEnd(5) + nombre.padEnd(25).substring(0,25) + precioFinal.padStart(7);
+        let detalle = `${cantidad}${unidad}`.padEnd(5) + nombre.padEnd(25).substring(0,25) + precioFinal.padStart(7);
         lines.push(detalle);
+        lines.push(`  P/U Bs ${itemCalc.precioFinalVisual.toFixed(2)}${unidad ? `/${unidad.trim()}` : ''}`);
         if (itemCalc.descuento > 0) {
-          lines.push(`  PROMO: ${(item.promocion?.descripcion || 'Descuento').substring(0,18)} -${itemCalc.descuento.toFixed(2)}`);
-          lines.push(`  ANTES: ${itemCalc.precioOriginal.toFixed(2)}`);
+          lines.push(`  PROMO: ${(item.promocion?.descripcion || 'Descuento').substring(0,18)} -${itemCalc.descuentoVisual.toFixed(2)}`);
+          lines.push(`  ANTES: ${itemCalc.precioOriginalVisual.toFixed(2)}`);
         }
       }
       if (!ticketSnapshot?.items || ticketSnapshot.items.length === 0) {
@@ -468,18 +517,20 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
     }
   }
 
-  async function printComprobante(opts?: { cotizacion?: boolean }) {
+  async function printComprobante() {
+    if (!props.modoPago) return alert('Selecciona un método de pago antes de imprimir');
+    if (props.modoPago === 'efectivo' && Number(props.pago || 0) < Number(props.total || 0)) {
+      return alert('El pago recibido es insuficiente');
+    }
     if ((!props.carrito || props.carrito.length === 0) && !props.ultimoTicket) return alert('No hay productos para imprimir');
-    const isCotizacion = opts && opts.cotizacion;
     const ticket = (props.ultimoTicket && (!props.carrito || props.carrito.length === 0))
       ? props.ultimoTicket
       : {
           fecha: new Date().toLocaleString(),
           cliente_nombre: props.clienteNombre,
           cliente_nit: props.clienteNIT,
-          modo_pago: isCotizacion ? undefined : props.modoPago,
+          modo_pago: props.modoPago,
           requiere_factura: props.requiereFactura,
-          cotizacion: isCotizacion,
           items: (props.carrito || []).map(it => ({
             ...it,
             precio_original: it.precio_original ?? it.precio ?? it.precio_unitario ?? 0,
@@ -496,8 +547,8 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
           impuestos: props.impuestos || 0,
           cobrar_impuestos: props.cobrarImpuestos || false,
           total: props.total,
-          pago: isCotizacion ? undefined : props.pago,
-          cambio: isCotizacion ? undefined : props.cambio
+          pago: props.pago,
+          cambio: props.cambio
         };
     props.setUltimoTicket(ticket);
     try {
@@ -560,7 +611,45 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
     }
   }
 
-  useImperativeHandle(ref, () => ({ printComprobante }));
+  async function printCotizacion() {
+    if (!props.carrito || props.carrito.length === 0) return alert('Agrega al menos un producto para imprimir la cotizacion');
+    const ticket = {
+      tipo_documento: 'cotizacion' as const,
+      fecha: new Date().toLocaleString(),
+      cliente_nombre: props.clienteNombre,
+      cliente_nit: props.clienteNIT,
+      modo_pago: '',
+      requiere_factura: props.requiereFactura,
+      items: (props.carrito || []).map(it => ({
+        ...it,
+        precio_original: it.precio_original ?? it.precio ?? it.precio_unitario ?? 0,
+        precio_unitario: it.precio_unitario ?? it.precio ?? 0,
+        descuento_item: it.descuento_item || 0,
+        promocion: it.promocion_aplicada || null
+      })),
+      subtotal: props.subtotal,
+      descuento: props.totalDescuento,
+      envio: props.envio || 0,
+      comision: props.comision || 0,
+      publicidad: props.publicidad || 0,
+      rebajas: props.rebajas || 0,
+      impuestos: props.impuestos || 0,
+      cobrar_impuestos: props.cobrarImpuestos || false,
+      total: props.total,
+      pago: 0,
+      cambio: 0
+    };
+    props.setUltimoTicket(ticket);
+    try {
+      const pdfOk = await printTicketAsPDF(ticket);
+      if (pdfOk) return;
+      alert('No se pudo generar la cotizacion para imprimir');
+    } catch (err) {
+      alert('Error al intentar imprimir la cotizacion');
+    }
+  }
+
+  useImperativeHandle(ref, () => ({ printComprobante, printCotizacion }));
 
   return (
     <>

@@ -1,10 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getSupabaseClient } from '../lib/SupabaseClient';
+import { supabase } from '../lib/SupabaseClient';
 
 export default function AuthDebug() {
-  const supabase = getSupabaseClient();
   const [authState, setAuthState] = useState({
     user: null,
     session: null,

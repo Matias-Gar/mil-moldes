@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { useEffect, useState, useRef } from 'react';
-import { getSupabaseClient } from "../../../lib/SupabaseClient";
+import { supabase } from "../../../lib/SupabaseClient";
 import { useRouter } from "next/navigation";
 import { v4 as uuidv4 } from 'uuid';
 import { PrecioConPromocion } from '../../../lib/promociones';
@@ -10,6 +10,8 @@ import { usePromociones } from '../../../lib/usePromociones';
 import { getOptimizedImageUrl, buildImageSrcSet } from '../../../lib/imageOptimization';
 import { optimizeImageForUpload } from '../../../lib/imageUploadOptimization';
 import { canAccessAdminPath } from '../../../lib/adminPermissions';
+import { normalizeProductView } from '../../../lib/productViews';
+import { useSucursalActiva } from '../../../components/admin/SucursalContext';
 
 // Desactivar SSR para el componente de código de barras si usa librerías de cliente como 'react-barcode'
 // Si la tabla usa react-barcode, este dynamic es necesario. Si solo usa la función handlePrintBarcode, se podría quitar.
@@ -92,9 +94,9 @@ function DeleteConfirmationModal({ isOpen, onClose, onConfirm, productName }) {
     );
 }
 
-// -------------------------------------------------------------------------- 
+// --------------------------------------------------------------------------
 // Lógica para subir la imagen a Supabase Storage (¡REVISAR RLS DE STORAGE!)
-// -------------------------------------------------------------------------- 
+// --------------------------------------------------------------------------
 const uploadProductImages = async (files) => {
     if (!files || files.length === 0) return [];
     const BUCKET_NAME = 'product_images';
@@ -113,7 +115,6 @@ const uploadProductImages = async (files) => {
         const fileExtension = preparedFile.name.split('.').pop();
         const fileName = `${uuidv4()}.${fileExtension}`;
         const filePath = `${userId}/${fileName}`;
-        const supabase = getSupabaseClient();
         const { error: uploadError } = await supabase.storage
             .from(BUCKET_NAME)
             .upload(filePath, preparedFile, {
@@ -131,42 +132,67 @@ const uploadProductImages = async (files) => {
     return urls;
 };
 
-// -------------------------------------------------------------------------- 
+function isMissingColumnError(error, columnName) {
+    return String(error?.message || '').toLowerCase().includes(String(columnName).toLowerCase());
+}
+
+function omitSucursalId(payload) {
+    const { sucursal_id, ...rest } = payload;
+    return rest;
+}
+
+async function insertWithOptionalSucursal(tableName, payloadOrPayloads, options = {}) {
+    const payloads = Array.isArray(payloadOrPayloads) ? payloadOrPayloads : [payloadOrPayloads];
+    const runInsert = (nextPayloads) => {
+        const query = supabase.from(tableName).insert(nextPayloads);
+        return options.select ? query.select() : query;
+    };
+
+    let result = await runInsert(payloads);
+    if (result.error && isMissingColumnError(result.error, 'sucursal_id')) {
+        result = await runInsert(payloads.map(omitSucursalId));
+    }
+    return result;
+}
+
+// --------------------------------------------------------------------------
 // COMPONENTE PRINCIPAL
-// -------------------------------------------------------------------------- 
-export default function AdminProductosPage() { 
+// --------------------------------------------------------------------------
+export default function AdminProductosPage() {
     // HOOKS AL INICIO
-    const router = useRouter(); 
-    const [userRole, setUserRole] = useState(null); 
+    const router = useRouter();
+    const { activeSucursalId } = useSucursalActiva();
+    const [userRole, setUserRole] = useState(null);
     const [productos, setProductos] = useState([]);
     const [imagenesProductos, setImagenesProductos] = useState({});
-    const newImageInputRef = useRef(null); 
-    const [showDeleteModal, setShowDeleteModal] = useState(false); 
-    const [productToDelete, setProductToDelete] = useState(null); 
-    const [categories, setCategories] = useState([]); 
+    const newImageInputRef = useRef(null);
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [productToDelete, setProductToDelete] = useState(null);
+    const [categories, setCategories] = useState([]);
     const [isImageModalOpen, setIsImageModalOpen] = useState(false);
     const [selectedImageIndex, setSelectedImageIndex] = useState(0);
     const [selectedImageList, setSelectedImageList] = useState([]);
     const [selectedImageName, setSelectedImageName] = useState('');
-    
+
     // Hook para promociones
-    const { promociones } = usePromociones();
-    
-    const [newProduct, setNewProduct] = useState({ 
-        nombre: '', 
-        descripcion: '', 
-        precio: '', 
-        stock: '', 
+    const { promociones } = usePromociones(activeSucursalId);
+
+    const [newProduct, setNewProduct] = useState({
+        nombre: '',
+        descripcion: '',
+        precio: '',
+        stock: '',
         category_id: '',
-        codigo_barra: ''
-    }); 
-    const [editingProduct, setEditingProduct] = useState(null); 
-    const [editImageFiles, setEditImageFiles] = useState([]); 
+        codigo_barra: '',
+        vista_producto: 'articulos'
+    });
+    const [editingProduct, setEditingProduct] = useState(null);
+    const [editImageFiles, setEditImageFiles] = useState([]);
     const [editImageList, setEditImageList] = useState([]); // URLs actuales
     const [imageFiles, setImageFiles] = useState([]); // Para alta
-    const [loading, setLoading] = useState(false); 
-    const [message, setMessage] = useState(''); 
-    const [isDeleting, setIsDeleting] = useState(false); 
+    const [loading, setLoading] = useState(false);
+    const [message, setMessage] = useState('');
+    const [isDeleting, setIsDeleting] = useState(false);
     // Eliminados los botones duplicados debajo del header
 
     // --------------------------------------------------------------------------
@@ -306,7 +332,6 @@ export default function AdminProductosPage() {
     // useEffect de autenticación y rol
     useEffect(() => {
         const checkAuthAndRole = async () => {
-            const supabase = getSupabaseClient();
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) {
                 router.push('/login');
@@ -335,7 +360,7 @@ export default function AdminProductosPage() {
     }, [router]);
 
     // --- FUNCIONES ---
-    
+
     const nextImage = () => {
         setSelectedImageIndex((prev) => (prev + 1) % selectedImageList.length);
     };
@@ -351,13 +376,13 @@ export default function AdminProductosPage() {
         setIsImageModalOpen(true);
     };
 
-    const handleNewProductChange = (e) => { 
-        setNewProduct({ ...newProduct, [e.target.name]: e.target.value }); 
-    }; 
-    
-    const handleEditProductChange = (e) => { 
-        setEditingProduct({ ...editingProduct, [e.target.name]: e.target.value }); 
-    }; 
+    const handleNewProductChange = (e) => {
+        setNewProduct({ ...newProduct, [e.target.name]: e.target.value });
+    };
+
+    const handleEditProductChange = (e) => {
+        setEditingProduct({ ...editingProduct, [e.target.name]: e.target.value });
+    };
 
     const handleImageChange = (e) => {
         const files = Array.from(e.target.files);
@@ -373,12 +398,12 @@ export default function AdminProductosPage() {
         setEditImageList(editImageList.filter(img => img !== url));
     };
 
-    const closeEditModal = () => { 
-        setEditingProduct(null); 
-        setEditImageFiles([]); 
-        setEditImageList([]); 
-        setMessage(''); 
-    }; 
+    const closeEditModal = () => {
+        setEditingProduct(null);
+        setEditImageFiles([]);
+        setEditImageList([]);
+        setMessage('');
+    };
 
     const openEditModal = (producto) => {
         setEditingProduct(producto);
@@ -386,18 +411,19 @@ export default function AdminProductosPage() {
         setEditImageList(imagenesProductos[producto.user_id] || []);
         setMessage('');
     };
-    
-    // -------------------------------------------------------------------------- 
-    // FUNCIONES DE SUPABASE 
-    // -------------------------------------------------------------------------- 
 
-    // Función para cargar categorías 
+    // --------------------------------------------------------------------------
+    // FUNCIONES DE SUPABASE
+    // --------------------------------------------------------------------------
+
+    // Función para cargar categorías
     const fetchCategories = async () => {
-        const supabase = getSupabaseClient();
-        const { data, error } = await supabase
+        let query = supabase
             .from('categorias')
             .select('id, categori')
             .order('categori', { ascending: true });
+        if (activeSucursalId) query = query.eq('sucursal_id', activeSucursalId);
+        const { data, error } = await query;
         if (error) {
             setCategories([]);
             setMessage('❌ Error al cargar categorías.');
@@ -412,11 +438,23 @@ export default function AdminProductosPage() {
             return;
         }
         setLoading(true);
-        // 1. Traer productos
-        const supabase = getSupabaseClient();
-        const { data, error } = await supabase
-            .from('productos')
-            .select(`
+        let vistaColumnAvailable = true;
+        let data = null;
+        let error = null;
+        const selectWithView = `
+                user_id,
+                nombre,
+                descripcion,
+                precio,
+                precio_compra,
+                stock,
+                imagen_url,
+                category_id,
+                codigo_barra,
+                vista_producto,
+                categorias (categori)
+            `;
+        const selectWithoutView = `
                 user_id,
                 nombre,
                 descripcion,
@@ -427,8 +465,29 @@ export default function AdminProductosPage() {
                 category_id,
                 codigo_barra,
                 categorias (categori)
-            `)
+            `;
+
+        let query = supabase
+            .from('productos')
+            .select(selectWithView)
             .order('nombre', { ascending: true });
+        if (activeSucursalId) query = query.eq('sucursal_id', activeSucursalId);
+        let response = await query;
+
+        data = response.data;
+        error = response.error;
+
+        if (error && String(error.message || '').includes('vista_producto')) {
+            vistaColumnAvailable = false;
+            let fallbackQuery = supabase
+                .from('productos')
+                .select(selectWithoutView)
+                .order('nombre', { ascending: true });
+            if (activeSucursalId) fallbackQuery = fallbackQuery.eq('sucursal_id', activeSucursalId);
+            response = await fallbackQuery;
+            data = response.data;
+            error = response.error;
+        }
 
         if (error) {
             setMessage(`❌ Error al cargar productos: ${error.message || JSON.stringify(error)}.`);
@@ -436,20 +495,25 @@ export default function AdminProductosPage() {
             setLoading(false);
             return;
         }
-        const formattedData = data.map(p => ({
+        const formattedData = (data || []).map(p => ({
             ...p,
+            vista_producto: normalizeProductView(p.vista_producto),
             category_name: p.categorias ? p.categorias.categori : 'Sin Categoría'
         }));
         setProductos(formattedData);
+        if (!vistaColumnAvailable) {
+            setMessage('Ejecuta scripts/add_product_view_column.sql en Supabase para separar articulos e insumos por vista.');
+        }
 
         // 2. Traer imágenes de todos los productos
         const ids = formattedData.map(p => p.user_id);
         if (ids.length > 0) {
-            const supabase = getSupabaseClient();
-            const { data: imgs, error: imgsError } = await supabase
+            let imgsQuery = supabase
                 .from('producto_imagenes')
                 .select('producto_id, imagen_url')
                 .in('producto_id', ids);
+            if (activeSucursalId) imgsQuery = imgsQuery.eq('sucursal_id', activeSucursalId);
+            const { data: imgs, error: imgsError } = await imgsQuery;
             if (!imgsError && imgs) {
                 // Agrupar por producto_id
                 const agrupadas = {};
@@ -472,9 +536,8 @@ export default function AdminProductosPage() {
             fetchCategories();
             fetchProductos();
         }
-        
+
         // Listener de tiempo real
-        const supabase = getSupabaseClient();
         const channel = supabase
             .channel('productos-channel')
             .on(
@@ -486,12 +549,11 @@ export default function AdminProductosPage() {
             )
             .subscribe();
         return () => {
-            const supabase = getSupabaseClient();
             supabase.removeChannel(channel);
         };
-    }, [userRole]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [userRole, activeSucursalId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    
+
     // Función para Añadir Producto
     const handleAñadirProducto = async (e) => {
         e.preventDefault();
@@ -508,30 +570,33 @@ export default function AdminProductosPage() {
             const codigoBarra = newProduct.codigo_barra || generateBarcode();
 
             // Usamos .select() para obtener el producto insertado y su user_id
-            const supabase = getSupabaseClient();
-            const { data: productoInsertado, error: insertError } = await supabase
-                .from('productos')
-                .insert([
-                    {
-                        nombre: newProduct.nombre,
-                        descripcion: newProduct.descripcion,
-                        precio: parseFloat(newProduct.precio) || 0,
-                        stock: parseInt(newProduct.stock) || 0,
-                        category_id: categoryIdValue,
-                        codigo_barra: codigoBarra
-                    }
-                ]).select();
+            const { data: productoInsertado, error: insertError } = await insertWithOptionalSucursal('productos', {
+                nombre: newProduct.nombre,
+                descripcion: newProduct.descripcion,
+                precio: parseFloat(newProduct.precio) || 0,
+                stock: parseInt(newProduct.stock) || 0,
+                category_id: categoryIdValue,
+                codigo_barra: codigoBarra,
+                vista_producto: normalizeProductView(newProduct.vista_producto),
+                sucursal_id: activeSucursalId || null
+            }, { select: true });
 
             if (insertError) {
+                if (String(insertError.message || '').includes('vista_producto')) {
+                    throw new Error('Tu base de datos aun no tiene la columna vista_producto. Ejecuta scripts/add_product_view_column.sql en Supabase.');
+                }
                 throw new Error(insertError.message);
             }
 
             // Insertar las imágenes en la tabla producto_imagenes
             if (productoInsertado && productoInsertado.length > 0 && imagenUrls.length > 0) {
                 const productoId = productoInsertado[0].user_id;
-                const imagesToInsert = imagenUrls.map(url => ({ producto_id: productoId, imagen_url: url }));
-                const supabase = getSupabaseClient();
-                const { error: imgInsertError } = await supabase.from('producto_imagenes').insert(imagesToInsert);
+                const imagesToInsert = imagenUrls.map(url => ({
+                    producto_id: productoId,
+                    imagen_url: url,
+                    sucursal_id: activeSucursalId || null
+                }));
+                const { error: imgInsertError } = await insertWithOptionalSucursal('producto_imagenes', imagesToInsert);
                 if (imgInsertError) {
                     // Nota: Idealmente, aquí también se debería intentar borrar los archivos subidos al storage.
                     throw new Error(`Error al insertar imágenes: ${imgInsertError.message}`);
@@ -539,7 +604,7 @@ export default function AdminProductosPage() {
             }
 
             setMessage('✅ Producto creado con éxito!');
-            setNewProduct({ nombre: '', descripcion: '', precio: '', stock: '', category_id: '', codigo_barra: '' });
+            setNewProduct({ nombre: '', descripcion: '', precio: '', stock: '', category_id: '', codigo_barra: '', vista_producto: 'articulos' });
             setImageFiles([]);
             if (newImageInputRef.current) {
                 newImageInputRef.current.value = '';
@@ -552,42 +617,43 @@ export default function AdminProductosPage() {
             setLoading(false);
         }
     };
-    
-    const handleDelete = async (producto) => { 
-        setProductToDelete(producto); 
-        setShowDeleteModal(true); 
-    }; 
 
-    const confirmDelete = async () => { 
-        if (!productToDelete) return; 
+    const handleDelete = async (producto) => {
+        setProductToDelete(producto);
+        setShowDeleteModal(true);
+    };
 
-        setShowDeleteModal(false); 
-        setIsDeleting(true); 
-        setMessage(''); 
+    const confirmDelete = async () => {
+        if (!productToDelete) return;
 
-        try { 
+        setShowDeleteModal(false);
+        setIsDeleting(true);
+        setMessage('');
+
+        try {
             // La eliminación en cascada debería manejar las imágenes relacionadas
-            const supabase = getSupabaseClient();
-            const { error } = await supabase 
-                .from('productos') 
-                .delete() 
+            let deleteQuery = supabase
+                .from('productos')
+                .delete()
                 // Usamos user_id como ID único del producto para filtrar
-                .eq('user_id', productToDelete.user_id); 
+                .eq('user_id', productToDelete.user_id);
+            if (activeSucursalId) deleteQuery = deleteQuery.eq('sucursal_id', activeSucursalId);
+            const { error } = await deleteQuery;
 
-            if (error) { 
-                throw new Error(error.message); 
-            } 
+            if (error) {
+                throw new Error(error.message);
+            }
 
-            setMessage(`✅ Producto "${productToDelete.nombre}" eliminado con éxito.`); 
-            fetchProductos(); 
-        } catch (e) { 
-            setMessage(`❌ Error al eliminar: ${e.message}`); 
-        } finally { 
-            setIsDeleting(false); 
-            setProductToDelete(null); 
-        } 
-    }; 
-    
+            setMessage(`✅ Producto "${productToDelete.nombre}" eliminado con éxito.`);
+            fetchProductos();
+        } catch (e) {
+            setMessage(`❌ Error al eliminar: ${e.message}`);
+        } finally {
+            setIsDeleting(false);
+            setProductToDelete(null);
+        }
+    };
+
     const handleGuardarEdicion = async (e) => {
         e.preventDefault();
         if (!editingProduct) return;
@@ -600,11 +666,10 @@ export default function AdminProductosPage() {
             if (editImageFiles && editImageFiles.length > 0) {
                 nuevasUrls = await uploadProductImages(editImageFiles);
             }
-            
+
             // 2. Actualizar producto (sin tocar imagen_url principal)
             const categoryIdValue = editingProduct.category_id ? parseInt(editingProduct.category_id) : null;
-            const supabase = getSupabaseClient();
-            const { error: updateError } = await supabase
+            let updateQuery = supabase
                 .from('productos')
                 .update({
                     nombre: editingProduct.nombre,
@@ -613,10 +678,13 @@ export default function AdminProductosPage() {
                     precio_compra: parseFloat(editingProduct.precio_compra) || 0,
                     stock: parseInt(editingProduct.stock) || 0,
                     category_id: categoryIdValue,
+                    vista_producto: normalizeProductView(editingProduct.vista_producto),
                     // Dejamos el codigo_barra para que no se re-genere si se guarda sin querer
                     codigo_barra: editingProduct.codigo_barra
                 })
                 .eq('user_id', editingProduct.user_id);
+            if (activeSucursalId) updateQuery = updateQuery.eq('sucursal_id', activeSucursalId);
+            const { error: updateError } = await updateQuery;
             if (updateError) {
                 throw new Error(updateError.message);
             }
@@ -628,14 +696,15 @@ export default function AdminProductosPage() {
 
             if (urlsAEliminar.length > 0) {
                 // Eliminamos las referencias de la tabla producto_imagenes
-                const supabase = getSupabaseClient();
-                const { error: deleteImgError } = await supabase.from('producto_imagenes')
+                let deleteImgQuery = supabase.from('producto_imagenes')
                     .delete()
                     .in('imagen_url', urlsAEliminar)
                     .eq('producto_id', editingProduct.user_id);
-                
+                if (activeSucursalId) deleteImgQuery = deleteImgQuery.eq('sucursal_id', activeSucursalId);
+                const { error: deleteImgError } = await deleteImgQuery;
+
                 if(deleteImgError) console.error("Error al eliminar referencias de imágenes:", deleteImgError.message);
-                
+
                 // NOTA: ELIMINAR del Storage es más complejo y no está implementado aquí,
                 // ya que requeriría el path exacto del archivo, no solo la URL pública.
                 // Esto es una mejora pendiente.
@@ -643,9 +712,12 @@ export default function AdminProductosPage() {
 
             // 4. Insertar nuevas imágenes
             if (nuevasUrls.length > 0) {
-                const imagesToInsert = nuevasUrls.map(url => ({ producto_id: editingProduct.user_id, imagen_url: url }));
-                const supabase = getSupabaseClient();
-                const { error: imgInsertError } = await supabase.from('producto_imagenes').insert(imagesToInsert);
+                const imagesToInsert = nuevasUrls.map(url => ({
+                    producto_id: editingProduct.user_id,
+                    imagen_url: url,
+                    sucursal_id: activeSucursalId || null
+                }));
+                const { error: imgInsertError } = await insertWithOptionalSucursal('producto_imagenes', imagesToInsert);
                 if (imgInsertError) {
                     throw new Error(imgInsertError.message);
                 }
@@ -660,7 +732,7 @@ export default function AdminProductosPage() {
             setLoading(false);
         }
     };
-    
+
     // Si no es admin, no renderizar nada (o un mensaje de acceso denegado)
     if (userRole === 'not_logged') {
         return <div className="p-8 text-center text-xl text-gray-500">Redirigiendo a Login...</div>;
@@ -672,51 +744,60 @@ export default function AdminProductosPage() {
     // Retorno del JSX del componente
     return (
         <div className="p-4 sm:p-6 md:p-10 bg-gray-100 min-h-screen">
-            <h1 className="text-3xl font-extrabold mb-8 text-indigo-700">Panel de Administración de Productos</h1>
-            
-            {/* Sección de Mensajes (Éxito/Error) */} 
-            {message && ( 
-                <div className={`p-4 mb-6 rounded-lg font-medium shadow-md ${message.startsWith('❌') 
-                    ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}> 
-                    {message} 
-                </div> 
-            )} 
+            <h1 className="text-3xl font-extrabold mb-8 text-indigo-700">Panel de Catalogo General</h1>
 
-            {/* 1. Formulario de Añadir Producto */} 
-            <div className="bg-white p-6 sm:p-8 rounded-xl shadow-lg mb-10 border-t-4 border-indigo-500"> 
-                <h2 className="text-2xl font-bold mb-6 text-gray-800 border-b pb-3">Añadir Nuevo Artículo</h2> 
-                <form onSubmit={handleAñadirProducto} className="space-y-6"> 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6"> 
-                        <input 
-                            type="text" 
-                            name="nombre" 
-                            placeholder="Nombre del Producto" 
-                            value={newProduct.nombre} 
-                            onChange={handleNewProductChange} 
-                            required 
-                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 placeholder-gray-700 font-semibold bg-white" 
-                        /> 
-                        <input 
-                            type="number" 
-                            name="precio" 
-                            placeholder="Precio (Bs)" 
-                            value={newProduct.precio} 
-                            onChange={handleNewProductChange} 
-                            required 
-                            step="0.01" 
-                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 placeholder-gray-700 font-semibold bg-white" 
-                        /> 
-                        <input 
-                            type="number" 
-                            name="stock" 
-                            placeholder="Stock (Cantidad)" 
-                            value={newProduct.stock} 
-                            onChange={handleNewProductChange} 
-                            required 
-                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 placeholder-gray-700 font-semibold bg-white" 
-                        /> 
-                        
-                        {/* Selección de Categoría */} 
+            {/* Sección de Mensajes (Éxito/Error) */}
+            {message && (
+                <div className={`p-4 mb-6 rounded-lg font-medium shadow-md ${message.startsWith('❌')
+                    ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                    {message}
+                </div>
+            )}
+
+            {/* 1. Formulario de Añadir Producto */}
+            <div className="bg-white p-6 sm:p-8 rounded-xl shadow-lg mb-10 border-t-4 border-indigo-500">
+                <h2 className="text-2xl font-bold mb-6 text-gray-800 border-b pb-3">Añadir Nuevo Artículo</h2>
+                <form onSubmit={handleAñadirProducto} className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <input
+                            type="text"
+                            name="nombre"
+                            placeholder="Nombre del Producto"
+                            value={newProduct.nombre}
+                            onChange={handleNewProductChange}
+                            required
+                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 placeholder-gray-700 font-semibold bg-white"
+                        />
+                        <input
+                            type="number"
+                            name="precio"
+                            placeholder="Precio (Bs)"
+                            value={newProduct.precio}
+                            onChange={handleNewProductChange}
+                            required
+                            step="0.01"
+                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 placeholder-gray-700 font-semibold bg-white"
+                        />
+                        <input
+                            type="number"
+                            name="stock"
+                            placeholder="Stock (Cantidad)"
+                            value={newProduct.stock}
+                            onChange={handleNewProductChange}
+                            required
+                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 placeholder-gray-700 font-semibold bg-white"
+                        />
+
+                        {/* Selección de Categoría */}
+                        <select
+                            name="vista_producto"
+                            value={newProduct.vista_producto}
+                            onChange={handleNewProductChange}
+                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 bg-white text-gray-900"
+                        >
+                            <option value="articulos">Vista: Articulos</option>
+                            <option value="insumos">Vista: Insumos</option>
+                        </select>
                         <select
                             name="category_id"
                             value={newProduct.category_id}
@@ -728,27 +809,27 @@ export default function AdminProductosPage() {
                                 <option key={cat.id} value={cat.id}>{cat.categori}</option>
                             ))}
                         </select>
-                    </div> 
-                    <textarea 
-                        name="descripcion" 
-                        placeholder="Descripción del Producto" 
-                        value={newProduct.descripcion} 
-                        onChange={handleNewProductChange} 
-                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 h-24 text-gray-900 placeholder-gray-700 font-semibold bg-white" 
-                    /> 
-                    
-                    {/* Campo de Código de Barras (Opcional) */}
-                    <input 
-                        type="text" 
-                        name="codigo_barra" 
-                        placeholder="Código de Barra (Opcional - Se genera si está vacío)" 
-                        value={newProduct.codigo_barra} 
-                        onChange={handleNewProductChange} 
-                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 placeholder-gray-700 font-semibold bg-white" 
-                        maxLength={13}
-                    /> 
+                    </div>
+                    <textarea
+                        name="descripcion"
+                        placeholder="Descripción del Producto"
+                        value={newProduct.descripcion}
+                        onChange={handleNewProductChange}
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 h-24 text-gray-900 placeholder-gray-700 font-semibold bg-white"
+                    />
 
-                    {/* Campo de Subida de Imagen */} 
+                    {/* Campo de Código de Barras (Opcional) */}
+                    <input
+                        type="text"
+                        name="codigo_barra"
+                        placeholder="Código de Barra (Opcional - Se genera si está vacío)"
+                        value={newProduct.codigo_barra}
+                        onChange={handleNewProductChange}
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 placeholder-gray-700 font-semibold bg-white"
+                        maxLength={13}
+                    />
+
+                    {/* Campo de Subida de Imagen */}
                     <div className="flex flex-col">
                         <label className="text-gray-700 font-medium mb-2">Imágenes del Producto</label>
                         <div className="flex items-center space-x-4">
@@ -773,24 +854,24 @@ export default function AdminProductosPage() {
                         </div>
                     </div>
 
-                    <button 
-                        type="submit" 
-                        disabled={loading} 
-                        className={`w-full py-3 font-bold text-white rounded-lg transition ${ 
-                            loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 shadow-lg' 
-                        }`} 
-                    > 
-                        {loading ? 'Añadiendo...' : '🛒 Añadir Producto'} 
-                    </button> 
-                </form> 
-            </div> 
-            
-            {/* 2. Catálogo Actual (Tabla) */} 
-            <h2 className="text-2xl font-bold mb-6 text-gray-800 border-b pb-3">Catálogo Actual</h2> 
-            
-            {loading && productos.length === 0 && <p className="text-center text-gray-600">Cargando catálogo...</p>} 
-            
-            {productos.length > 0 ? ( 
+                    <button
+                        type="submit"
+                        disabled={loading}
+                        className={`w-full py-3 font-bold text-white rounded-lg transition ${
+                            loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 shadow-lg'
+                        }`}
+                    >
+                        {loading ? 'Añadiendo...' : '🛒 Añadir Producto'}
+                    </button>
+                </form>
+            </div>
+
+            {/* 2. Catálogo Actual (Tabla) */}
+            <h2 className="text-2xl font-bold mb-6 text-gray-800 border-b pb-3">Catálogo Actual</h2>
+
+            {loading && productos.length === 0 && <p className="text-center text-gray-600">Cargando catálogo...</p>}
+
+            {productos.length > 0 ? (
                 <div className="overflow-x-auto bg-white rounded-xl shadow-lg">
                     <table className="min-w-full divide-y divide-gray-200">
                         <thead className="bg-white">
@@ -857,8 +938,8 @@ export default function AdminProductosPage() {
                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold">{safe(producto.nombre)}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{safe(producto.category_name)}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm">
-                                            <PrecioConPromocion 
-                                                producto={producto} 
+                                            <PrecioConPromocion
+                                                producto={producto}
                                                 promociones={promociones}
                                                 className=""
                                                 compact={true}
@@ -891,7 +972,7 @@ export default function AdminProductosPage() {
             ) : (
                 !loading && <p className="text-center text-gray-600">No hay productos en el catálogo.</p>
             )}
-            
+
             {/* Modal de Edición (Faltaba en tu código, lo agregué con la lógica base) */}
             {editingProduct && (
                 <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50 overflow-y-auto">
@@ -906,6 +987,15 @@ export default function AdminProductosPage() {
                                 <input type="number" name="precio" placeholder="Precio de Venta (Bs)" value={editingProduct.precio} onChange={handleEditProductChange} required step="0.01" className="w-full p-3 border rounded-lg"/>
                                 <input type="number" name="stock" placeholder="Stock" value={editingProduct.stock} onChange={handleEditProductChange} required className="w-full p-3 border rounded-lg"/>
                                 <select
+                                    name="vista_producto"
+                                    value={editingProduct.vista_producto ?? 'articulos'}
+                                    onChange={handleEditProductChange}
+                                    className="w-full p-3 border rounded-lg bg-white"
+                                >
+                                    <option value="articulos">Vista: Articulos</option>
+                                    <option value="insumos">Vista: Insumos</option>
+                                </select>
+                                <select
                                     name="category_id"
                                     value={editingProduct.category_id}
                                     onChange={handleEditProductChange}
@@ -914,17 +1004,17 @@ export default function AdminProductosPage() {
                                     <option value="">-- Seleccionar Categoría --</option>
                                     {categories.map(cat => (<option key={cat.id} value={cat.id}>{cat.categori}</option>))}
                                 </select>
-                                <input 
-                                    type="text" 
-                                    name="codigo_barra" 
-                                    placeholder="Código de Barra" 
-                                    value={editingProduct.codigo_barra} 
-                                    onChange={handleEditProductChange} 
-                                    className="w-full p-3 border rounded-lg" 
+                                <input
+                                    type="text"
+                                    name="codigo_barra"
+                                    placeholder="Código de Barra"
+                                    value={editingProduct.codigo_barra}
+                                    onChange={handleEditProductChange}
+                                    className="w-full p-3 border rounded-lg"
                                     maxLength={13}
-                                /> 
+                                />
                             </div>
-                            
+
                             {/* Imágenes Actuales (con opción a eliminar) */}
                             <div className="border p-3 rounded-lg">
                                 <label className="block text-gray-700 font-medium mb-2">Imágenes Actuales (Click para eliminar)</label>
@@ -961,7 +1051,7 @@ export default function AdminProductosPage() {
                                 />
                                 {editImageFiles.length > 0 && <span className="text-sm text-gray-500 mt-1">{editImageFiles.length} nuevo(s) archivo(s) listo(s) para subir.</span>}
                             </div>
-                            
+
                             <div className="flex justify-end space-x-4 pt-4">
                                 <button type="button" onClick={closeEditModal} className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition">Cancelar</button>
                                 <button type="submit" disabled={loading} className={`px-4 py-2 font-bold text-white rounded-lg transition ${loading ? 'bg-indigo-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
@@ -972,9 +1062,9 @@ export default function AdminProductosPage() {
                     </div>
                 </div>
             )}
-            
+
             {/* Modal de Confirmación de Eliminación */}
-            <DeleteConfirmationModal 
+            <DeleteConfirmationModal
                 isOpen={showDeleteModal}
                 onClose={() => setShowDeleteModal(false)}
                 onConfirm={confirmDelete}
@@ -990,7 +1080,7 @@ export default function AdminProductosPage() {
                 productName={selectedImageName}
                 onPrev={prevImage}
                 onNext={nextImage}
-            /> 
+            />
         </div> // Cierre del div principal
     ); // Cierre del return
 } // Cierre de la función AdminProductosPage

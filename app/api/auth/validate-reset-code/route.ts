@@ -1,6 +1,6 @@
 "use server";
 import { NextResponse } from 'next/server';
-import { getSupabaseClient } from '../../../../lib/SupabaseClient';
+import { supabase } from '../../../../lib/SupabaseClient';
 
 export async function POST(req: Request) {
   const { email, code, nueva_contrasena } = await req.json();
@@ -9,7 +9,6 @@ export async function POST(req: Request) {
   }
   const emailNorm = email.trim().toLowerCase();
   // Buscar el código en la tabla
-  const supabase = getSupabaseClient();
   const { data: reset, error } = await supabase
     .from('password_resets')
     .select('code, expires_at')

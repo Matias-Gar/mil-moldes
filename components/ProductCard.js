@@ -24,8 +24,6 @@ export default function ProductCard({
     (sum, v) => sum + (parseInt(v?.stock ?? 0) || 0),
     0
   );
-  // Colores únicos para datalist
-  const uniqueColors = Array.from(new Set(variantsArr.map(v => (v.color || '').trim()).filter(Boolean)));
   // Siempre usar la imagen del producto, nunca de variante
   const imageFromProducto = imagesArr.find(
     (img) => String(img.imagen_url || "") === String(prod.imagen_url || "")
@@ -208,29 +206,14 @@ export default function ProductCard({
               <span></span>
             </div>
             {variantsArr.map((variant, idx) => (
-              <div
-                key={
-                  variant.id !== undefined && variant.id !== null
-                    ? `${productId}-variant-${variant.id}`
-                    : `${productId}-variant-new-${idx}`
-                }
-                className="grid grid-cols-1 md:grid-cols-6 gap-2 items-center bg-white border border-slate-200 rounded-lg p-2"
-              >
-                <>
-                  <Input
-                    list={`color-options-${productId}`}
-                    value={variant.color ?? ""}
-                    onChange={(e) => onVariantFieldChange(productId, idx, "color", e.target.value)}
-                    onBlur={(e) => onVariantFieldChange(productId, idx, "color", normalizeColor(e.target.value))}
-                    placeholder="Color (ej: Rojo)"
-                    className="text-sm"
-                  />
-                  <datalist id={`color-options-${productId}`}>
-                    {uniqueColors.map((color, i) => (
-                      <option key={color + i} value={color} />
-                    ))}
-                  </datalist>
-                </>
+              <div key={`${productId}-variant-${variant.id ?? idx}`} className="grid grid-cols-1 md:grid-cols-6 gap-2 items-center bg-white border border-slate-200 rounded-lg p-2">
+                <Input
+                  value={variant.color ?? ""}
+                  onChange={(e) => onVariantFieldChange(productId, idx, "color", e.target.value)}
+                  onBlur={(e) => onVariantFieldChange(productId, idx, "color", normalizeColor(e.target.value))}
+                  placeholder="Color"
+                  className="text-sm"
+                />
                 <Input
                   type="number"
                   min="0"

@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
-import { getSupabaseClient } from "../../../../lib/SupabaseClient";
+import { supabase } from "../../../../lib/SupabaseClient";
 import dynamic from "next/dynamic";
+import { useSucursalActiva } from "../../../../components/admin/SucursalContext";
 
 const Pie = dynamic(() => import("react-chartjs-2").then(mod => mod.Pie), { ssr: false });
 const Line = dynamic(() => import("react-chartjs-2").then(mod => mod.Line), { ssr: false });
@@ -10,6 +11,7 @@ import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearSca
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, BarElement);
 
 export default function VentasEstadisticaPage() {
+  const { activeSucursalId } = useSucursalActiva();
   const [ventas, setVentas] = useState([]);
   const [detalles, setDetalles] = useState([]);
   const [reportLines, setReportLines] = useState([]);
@@ -17,21 +19,25 @@ export default function VentasEstadisticaPage() {
 
   useEffect(() => {
     async function fetchVentas() {
-      const supabase = getSupabaseClient();
-      const { data, error } = await supabase
+
+      let ventasQuery = supabase
         .from("ventas")
         .select("id, total, fecha, costos_extra, descuentos, cliente_nombre, modo_pago");
+      if (activeSucursalId) ventasQuery = ventasQuery.eq("sucursal_id", activeSucursalId);
+      const { data, error } = await ventasQuery;
       if (!error && data) setVentas(data);
 
-      const { data: dets } = await supabase
+      let detallesQuery = supabase
         .from("ventas_detalle")
         .select("venta_id, producto_id, cantidad, precio_unitario, costo_unitario");
+      if (activeSucursalId) detallesQuery = detallesQuery.eq("sucursal_id", activeSucursalId);
+      const { data: dets } = await detallesQuery;
       if (dets) {
         setDetalles(dets);
       }
     }
     fetchVentas();
-  }, []);
+  }, [activeSucursalId]);
 
 
   useEffect(() => {
@@ -83,11 +89,6 @@ export default function VentasEstadisticaPage() {
   }, [ventas, detalles]);
 
   // Diagnóstico rápido
-  useEffect(() => {
-    console.log("VENTAS:", ventas);
-    console.log("DETALLES:", detalles);
-  }, [ventas, detalles]);
-
   const totalVentas = ventas.length;
   const montoTotal = ventas.reduce((acc, v) => acc + Number(v.total), 0);
   const ticketPromedio = totalVentas > 0 ? montoTotal / totalVentas : 0;

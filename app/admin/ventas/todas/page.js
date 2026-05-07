@@ -7,6 +7,7 @@ import SalesChart from '../../../../components/venta/dashboard/SalesChart';
 import SalesTable from '../../../../components/venta/dashboard/SalesTable';
 import TopProductsCard from '../../../../components/venta/dashboard/TopProductsCard';
 import { useVentasDashboard } from '../../../../hooks/useVentasDashboard';
+import { useSucursalActiva } from '../../../../components/admin/SucursalContext';
 
 function money(value) {
   const num = Number(value) || 0;
@@ -14,6 +15,7 @@ function money(value) {
 }
 
 export default function TodasVentasPage() {
+  const { activeSucursalId } = useSucursalActiva();
   const [monthFilter, setMonthFilter] = useState('');
 
   const {
@@ -27,7 +29,7 @@ export default function TodasVentasPage() {
     salesRows,
     salesByDay,
     topProducts,
-  } = useVentasDashboard();
+  } = useVentasDashboard(activeSucursalId);
 
   const handleMonthChange = (month) => {
     setMonthFilter(month || '');

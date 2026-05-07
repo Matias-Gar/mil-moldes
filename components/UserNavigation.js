@@ -1,12 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { getSupabaseClient } from '../lib/SupabaseClient';
+import { supabase } from '../lib/SupabaseClient';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 export default function UserNavigation() {
-  const supabase = getSupabaseClient();
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);

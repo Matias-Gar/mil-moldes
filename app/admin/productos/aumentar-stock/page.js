@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getSupabaseClient } from "@/lib/SupabaseClient";
+import { supabase } from "@/lib/SupabaseClient";
 
 import Toast, { showToast } from '../../../../components/ui/Toast';
 
@@ -9,8 +9,10 @@ import Toast, { showToast } from '../../../../components/ui/Toast';
 import { registrarMovimientoStock } from "@/lib/stockMovimientos";
 import { registrarHistorialProducto } from "@/lib/productosHistorial";
 import { sincronizarStockProducto } from "@/lib/utils";
+import { useSucursalActiva } from "@/components/admin/SucursalContext";
 
 export default function AumentarStockPage() {
+  const { activeSucursalId } = useSucursalActiva();
   const QZ_PRINTER_NAME = "POS-80C";
   const ENABLE_QZ_DIRECT_LABEL_PRINT = true;
 
@@ -20,12 +22,14 @@ export default function AumentarStockPage() {
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState(null);
   const [increments, setIncrements] = useState({});
+  const [incrementUnits, setIncrementUnits] = useState({});
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
 
   useEffect(() => {
+    if (!activeSucursalId) return;
     fetchData();
-  }, []);
+  }, [activeSucursalId]);
 
   const loadQzTray = () =>
     new Promise((resolve, reject) => {
@@ -214,8 +218,7 @@ export default function AumentarStockPage() {
   async function fetchData() {
     setLoading(true);
 
-    const supabase = getSupabaseClient();
-    const { data: prods, error: prodsError } = await supabase
+    let productosQuery = supabase
       .from("productos")
       .select(`
         user_id,
@@ -223,10 +226,15 @@ export default function AumentarStockPage() {
         stock,
         codigo_barra,
         category_id,
+        unidad_base,
+        unidades_alternativas,
+        factor_conversion,
         categorias (categori)
       `)
       .order("nombre", { ascending: true })
       .limit(1200);
+    if (activeSucursalId) productosQuery = productosQuery.eq("sucursal_id", activeSucursalId);
+    const { data: prods, error: prodsError } = await productosQuery;
 
     if (prodsError) {
       console.error("Error cargando productos:", prodsError);
@@ -252,24 +260,30 @@ export default function AumentarStockPage() {
       for (let i = 0; i < validProductIds.length; i += CHUNK_SIZE) {
         const chunk = validProductIds.slice(i, i + CHUNK_SIZE);
         let vars = [];
-        const withActive = await supabase
+        let withActiveQuery = supabase
           .from("producto_variantes")
-          .select("id, producto_id, color, stock, activo, codigo_barra, sku")
+          .select("id, producto_id, color, stock, stock_decimal, activo, codigo_barra, sku")
           .in("producto_id", chunk)
           .eq("activo", true)
           .order("color", { ascending: true });
+        if (activeSucursalId) withActiveQuery = withActiveQuery.eq("sucursal_id", activeSucursalId);
+        const withActive = await withActiveQuery;
         if (withActive.error) {
-          const fallbackWithoutActive = await supabase
+          let fallbackWithoutActiveQuery = supabase
             .from("producto_variantes")
-            .select("id, producto_id, color, stock, codigo_barra, sku")
+            .select("id, producto_id, color, stock, stock_decimal, codigo_barra, sku")
             .in("producto_id", chunk)
             .order("color", { ascending: true });
+          if (activeSucursalId) fallbackWithoutActiveQuery = fallbackWithoutActiveQuery.eq("sucursal_id", activeSucursalId);
+          const fallbackWithoutActive = await fallbackWithoutActiveQuery;
           if (fallbackWithoutActive.error) {
-            const minimalFallback = await supabase
+            let minimalFallbackQuery = supabase
               .from("producto_variantes")
               .select("id, producto_id, color, stock")
               .in("producto_id", chunk)
               .order("color", { ascending: true });
+            if (activeSucursalId) minimalFallbackQuery = minimalFallbackQuery.eq("sucursal_id", activeSucursalId);
+            const minimalFallback = await minimalFallbackQuery;
             if (minimalFallback.error) {
               console.warn("Variantes no disponibles en este esquema:", minimalFallback.error);
               vars = [];
@@ -296,6 +310,12 @@ export default function AumentarStockPage() {
         grouped[pid].push(v);
       });
       setVariantesByProducto(grouped);
+      setProductos((prev) => prev.map((prod) => {
+        const pid = String(prod.user_id ?? "");
+        const variants = grouped[pid] || [];
+        if (!Array.isArray(variants) || variants.length === 0) return prod;
+        return { ...prod, stock: getBaseStock(prod, variants) };
+      }));
     } else {
       setVariantesByProducto({});
     }
@@ -307,16 +327,114 @@ export default function AumentarStockPage() {
     return String(prod?.categorias?.categori || prod?.categoria || prod?.category_id || "Sin categoria");
   }
 
-  function setIncrementValue(key, rawValue) {
-    const parsed = Number(String(rawValue || "").replace(/\D/g, ""));
-    const value = Number.isFinite(parsed) ? parsed : 0;
+  function formatQuantity(value) {
+    const parsed = Number(value || 0);
+    if (!Number.isFinite(parsed)) return "0";
+    return Number(parsed.toFixed(3)).toString();
+  }
+
+  function getEffectiveVariantStock(variant) {
+    const decimal = Number(variant?.stock_decimal);
+    const legacy = Number(variant?.stock);
+    return Math.max(0, Number.isFinite(decimal) && decimal > 0 ? decimal : legacy || 0);
+  }
+
+  function getUnitInfo(prod) {
+    const unidadBase = String(prod?.unidad_base || "unidad").trim() || "unidad";
+    const alternativas = Array.isArray(prod?.unidades_alternativas)
+      ? prod.unidades_alternativas.map((u) => String(u || "").trim()).filter(Boolean)
+      : [];
+    const unidadAlternativa = alternativas.find((u) => u && u !== unidadBase);
+    const factor = Number(prod?.factor_conversion || 0);
+    const hasConversion = Boolean(unidadAlternativa && Number.isFinite(factor) && factor > 0);
+    return { unidadBase, unidadAlternativa, factor, hasConversion };
+  }
+
+  function getSelectableUnits(prod) {
+    const { unidadBase, unidadAlternativa, hasConversion } = getUnitInfo(prod);
+    return hasConversion ? [unidadBase, unidadAlternativa] : [unidadBase];
+  }
+
+  function normalizeUnitName(unit) {
+    return String(unit || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim();
+  }
+
+  function isDiscreteUnit(unit) {
+    return ["unidad", "unidades", "pieza", "piezas", "pza", "pzas", "par", "pares", "item", "items", "articulo", "articulos"].includes(normalizeUnitName(unit));
+  }
+
+  function getQuantityStep(unit) {
+    return isDiscreteUnit(unit) ? 1 : 0.01;
+  }
+
+  function normalizeIncrementValue(rawValue, unit) {
+    const cleaned = String(rawValue || "").replace(",", ".").replace(/[^\d.]/g, "");
+    const parsed = Number(cleaned);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+    return isDiscreteUnit(unit) ? Math.floor(parsed) : parsed;
+  }
+
+  function getSelectedUnit(prod, key) {
+    const units = getSelectableUnits(prod);
+    const selected = incrementUnits[key];
+    return units.includes(selected) ? selected : units[0];
+  }
+
+  function getBaseStock(prod, variants = null) {
+    const productStock = Math.max(0, Number(prod?.stock || 0));
+    const list = Array.isArray(variants) ? variants : [];
+    if (list.length > 0) {
+      const variantStock = list.reduce((sum, v) => sum + getEffectiveVariantStock(v), 0);
+      return variantStock > 0 || productStock <= 0 ? variantStock : productStock;
+    }
+    return productStock;
+  }
+
+  function getReadableStockText(prod, stockInput = null) {
+    const { unidadBase, unidadAlternativa, factor, hasConversion } = getUnitInfo(prod);
+    const stockBase = Math.max(0, Number(stockInput ?? prod?.stock ?? 0) || 0);
+    if (!hasConversion) return `${formatQuantity(stockBase)} ${unidadBase}`;
+
+    const completos = Math.floor(stockBase + 0.000001);
+    const metrosSueltos = Math.max(0, (stockBase - completos) * factor);
+    const totalAlt = stockBase * factor;
+    if (completos > 0 && metrosSueltos > 0) {
+      return `${completos} ${unidadBase}${completos === 1 ? "" : "s"} + ${formatQuantity(metrosSueltos)} ${unidadAlternativa}`;
+    }
+    if (completos > 0) {
+      return `${completos} ${unidadBase}${completos === 1 ? "" : "s"} (${formatQuantity(totalAlt)} ${unidadAlternativa})`;
+    }
+    return `Solo ${formatQuantity(totalAlt)} ${unidadAlternativa}`;
+  }
+
+  function getBaseIncrease(prod, key) {
+    const rawAmount = Number(increments[key] || 0);
+    const { unidadBase, factor, hasConversion } = getUnitInfo(prod);
+    const selectedUnit = getSelectedUnit(prod, key);
+    if (!hasConversion || selectedUnit === unidadBase) return rawAmount;
+    return rawAmount / factor;
+  }
+
+  function setIncrementValue(key, rawValue, unit) {
+    const value = normalizeIncrementValue(rawValue, unit);
     setIncrements((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function setIncrementUnit(key, unit) {
+    setIncrementUnits((prev) => ({ ...prev, [key]: unit }));
+    setIncrements((prev) => ({ ...prev, [key]: normalizeIncrementValue(prev[key], unit) }));
   }
 
   async function aumentarStockProducto(prod, shouldPrint = false) {
     const pid = prod.user_id;
     const key = `p-${pid}`;
-    const increaseBy = Number(increments[key] || 0);
+    const increaseBy = getBaseIncrease(prod, key);
+    const displayIncrease = Number(increments[key] || 0);
+    const selectedUnit = getSelectedUnit(prod, key);
 
     if (increaseBy <= 0) {
       showToast("Ingresa una cantidad mayor a 0", "info");
@@ -337,10 +455,10 @@ export default function AumentarStockPage() {
       if (error) throw error;
 
       // Sincroniza el stock del producto como suma de variantes
-      await sincronizarStockProducto(pid, supabase);
+      const totalStock = await sincronizarStockProducto(pid, supabase);
 
       setProductos((prev) =>
-        prev.map((p) => (p.user_id === pid ? { ...p, stock: newStock } : p))
+        prev.map((p) => (p.user_id === pid ? { ...p, stock: totalStock } : p))
       );
       setIncrements((prev) => ({ ...prev, [key]: 0 }));
 
@@ -356,18 +474,21 @@ export default function AumentarStockPage() {
         const movimientoPayload = {
           producto_id: Number(pid),
           tipo: 'aumento',
-          cantidad: Number(increaseBy),
+          cantidad: Number(displayIncrease),
+          cantidad_base: Number(increaseBy),
+          unidad: selectedUnit,
           usuario_id: user?.id || null,
           usuario_email: user?.email || '',
-          observaciones: 'Aumento de stock desde panel'
+          sucursal_id: activeSucursalId || null,
+          observaciones: `Aumento de stock desde panel (${formatQuantity(displayIncrease)} ${selectedUnit})`
         };
-        console.log('registrarMovimientoStock payload:', movimientoPayload);
         await registrarMovimientoStock(movimientoPayload);
         await registrarHistorialProducto({
           producto_id: pid,
           accion: "UPDATE",
           datos_anteriores: actual,
-          datos_nuevos: { ...actual, stock: newStock },
+          datos_nuevos: { ...actual, stock: totalStock },
+          sucursal_id: activeSucursalId || null,
           usuario_email: user?.email || null
         });
       } catch (err) {
@@ -380,7 +501,7 @@ export default function AumentarStockPage() {
           showToast("No se puede imprimir: el producto no tiene código de barras", "error");
           return;
         }
-        await printLabels({ code: barcode, label: prod.nombre, copies: increaseBy });
+        await printLabels({ code: barcode, label: prod.nombre, copies: Math.max(1, Math.ceil(displayIncrease)) });
       }
 
       showToast(`Stock actualizado para ${prod.nombre}`);
@@ -396,14 +517,16 @@ export default function AumentarStockPage() {
     const pid = prod.user_id;
     const variantId = variante.id;
     const key = `v-${variantId}`;
-    const increaseBy = Number(increments[key] || 0);
+    const increaseBy = getBaseIncrease(prod, key);
+    const displayIncrease = Number(increments[key] || 0);
+    const selectedUnit = getSelectedUnit(prod, key);
 
     if (increaseBy <= 0) {
       showToast("Ingresa una cantidad mayor a 0", "info");
       return;
     }
 
-    const currentVariantStock = Number(variante.stock || 0);
+    const currentVariantStock = getEffectiveVariantStock(variante);
     const nextVariantStock = currentVariantStock + increaseBy;
 
     try {
@@ -411,14 +534,17 @@ export default function AumentarStockPage() {
 
       const { error: variantError } = await supabase
         .from("producto_variantes")
-        .update({ stock: nextVariantStock })
+        .update({
+          stock_decimal: nextVariantStock,
+          stock: Math.floor(nextVariantStock),
+        })
         .eq("id", variantId);
 
       if (variantError) throw variantError;
 
 
       // Sincroniza el stock del producto como suma de variantes
-      await sincronizarStockProducto(pid, supabase);
+      const totalStock = await sincronizarStockProducto(pid, supabase);
 
       // Registrar movimiento e historial de aumento de stock para variante
       try {
@@ -433,18 +559,21 @@ export default function AumentarStockPage() {
           producto_id: Number(pid),
           variante_id: Number(variantId),
           tipo: 'aumento',
-          cantidad: Number(increaseBy),
+          cantidad: Number(displayIncrease),
+          cantidad_base: Number(increaseBy),
+          unidad: selectedUnit,
           usuario_id: user?.id || null,
           usuario_email: user?.email || '',
-          observaciones: `Aumento de stock en variante (${variante.color || 'Unico'}) desde panel`
+          sucursal_id: activeSucursalId || null,
+          observaciones: `Aumento de stock en variante (${variante.color || 'Unico'}) desde panel (${formatQuantity(displayIncrease)} ${selectedUnit})`
         };
-        console.log('registrarMovimientoStock payload:', movimientoPayload);
         await registrarMovimientoStock(movimientoPayload);
         await registrarHistorialProducto({
           producto_id: pid,
           accion: "UPDATE",
           datos_anteriores: actual,
           datos_nuevos: { ...actual, stock: totalStock },
+          sucursal_id: activeSucursalId || null,
           usuario_email: user?.email || null
         });
       } catch (err) {
@@ -454,7 +583,7 @@ export default function AumentarStockPage() {
       setVariantesByProducto((prev) => ({
         ...prev,
         [String(pid)]: (prev[String(pid)] || []).map((v) =>
-          v.id === variantId ? { ...v, stock: nextVariantStock } : v
+          v.id === variantId ? { ...v, stock: Math.floor(nextVariantStock), stock_decimal: nextVariantStock } : v
         ),
       }));
 
@@ -471,7 +600,7 @@ export default function AumentarStockPage() {
           return;
         }
         const label = `${prod.nombre} - ${variante.color || "Unico"}`;
-        await printLabels({ code: barcode, label, copies: increaseBy });
+        await printLabels({ code: barcode, label, copies: Math.max(1, Math.ceil(displayIncrease)) });
       }
 
       showToast(`Stock aumentado en ${variante.color || "Unico"}`);
@@ -560,6 +689,11 @@ export default function AumentarStockPage() {
               const hasVariants = Array.isArray(variants) && variants.length > 0;
               const productKey = `p-${pid}`;
               const productIncrement = increments[productKey] ?? 0;
+              const productUnit = getSelectedUnit(prod, productKey);
+              const productBaseIncrease = getBaseIncrease(prod, productKey);
+              const units = getSelectableUnits(prod);
+              const productStock = getBaseStock(prod, variants);
+              const unitInfo = getUnitInfo(prod);
 
               return (
                 <article key={pid} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -585,8 +719,13 @@ export default function AumentarStockPage() {
                         </p>
                       </div>
                     </div>
-                    <div className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">
-                      Stock actual: {Number(prod.stock || 0)}
+                    <div className="rounded-xl bg-slate-100 px-3 py-2 text-right text-sm font-semibold text-slate-700">
+                      <div>Stock actual: {getReadableStockText(prod, productStock)}</div>
+                      {unitInfo.hasConversion && (
+                        <div className="text-xs font-medium text-slate-500">
+                          Base: {formatQuantity(productStock)} {unitInfo.unidadBase}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -606,18 +745,49 @@ export default function AumentarStockPage() {
                             const variantKey = `v-${variant.id}`;
                             const increment = increments[variantKey] ?? 0;
                             const isSaving = savingKey === variantKey;
+                            const selectedUnit = getSelectedUnit(prod, variantKey);
+                            const baseIncrease = getBaseIncrease(prod, variantKey);
+                            const variantStock = getEffectiveVariantStock(variant);
                             return (
                               <tr key={variant.id} className="border-b border-slate-100">
                                 <td className="py-2 font-medium text-slate-800">{variant.color || "Unico"}</td>
-                                <td className="py-2 text-center text-slate-700">{Number(variant.stock || 0)}</td>
+                                <td className="py-2 text-center text-slate-700">
+                                  <div className="font-semibold">{getReadableStockText(prod, variantStock)}</div>
+                                  {unitInfo.hasConversion && (
+                                    <div className="text-xs text-slate-500">
+                                      Base: {formatQuantity(variantStock)} {unitInfo.unidadBase}
+                                    </div>
+                                  )}
+                                </td>
                                 <td className="py-2 text-center">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    value={increment}
-                                    onChange={(e) => setIncrementValue(variantKey, e.target.value)}
-                                    className="h-9 w-24 rounded-md border border-gray-200 px-2 text-right"
-                                  />
+                                  <div className="flex flex-col items-center gap-1">
+                                    <div className="flex items-center justify-center gap-2">
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step={getQuantityStep(selectedUnit)}
+                                        value={increment}
+                                        onChange={(e) => setIncrementValue(variantKey, e.target.value, selectedUnit)}
+                                        className="h-9 w-24 rounded-md border border-gray-200 px-2 text-right"
+                                      />
+                                      {units.length > 1 && (
+                                        <select
+                                          value={selectedUnit}
+                                          onChange={(e) => setIncrementUnit(variantKey, e.target.value)}
+                                          className="h-9 rounded-md border border-gray-200 px-2 text-sm"
+                                        >
+                                          {units.map((unit) => (
+                                            <option key={unit} value={unit}>{unit}</option>
+                                          ))}
+                                        </select>
+                                      )}
+                                    </div>
+                                    {unitInfo.hasConversion && Number(increment) > 0 && (
+                                      <div className="text-xs font-semibold text-blue-700">
+                                        Suma {formatQuantity(baseIncrease)} {unitInfo.unidadBase}
+                                      </div>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="py-2 text-right">
                                   <div className="flex items-center justify-end gap-2">
@@ -647,15 +817,35 @@ export default function AumentarStockPage() {
                     </div>
                   ) : (
                     <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-3">
-                      <p className="mb-2 text-sm text-slate-600">Producto unico (sin colores). Aumenta stock directo:</p>
+                      <p className="mb-2 text-sm text-slate-600">
+                        Producto unico (sin colores). Aumenta stock directo
+                        {unitInfo.hasConversion ? ` por ${units.join(" o ")}` : ""}:
+                      </p>
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                         <input
                           type="number"
                           min="0"
+                          step={getQuantityStep(productUnit)}
                           value={productIncrement}
-                          onChange={(e) => setIncrementValue(productKey, e.target.value)}
+                          onChange={(e) => setIncrementValue(productKey, e.target.value, productUnit)}
                           className="h-9 w-32 rounded-md border border-gray-200 px-2 text-right"
                         />
+                        {units.length > 1 && (
+                          <select
+                            value={productUnit}
+                            onChange={(e) => setIncrementUnit(productKey, e.target.value)}
+                            className="h-9 rounded-md border border-gray-200 px-3 text-sm"
+                          >
+                            {units.map((unit) => (
+                              <option key={unit} value={unit}>{unit}</option>
+                            ))}
+                          </select>
+                        )}
+                        {unitInfo.hasConversion && Number(productIncrement) > 0 && (
+                          <span className="text-xs font-semibold text-blue-700">
+                            Suma {formatQuantity(productBaseIncrease)} {unitInfo.unidadBase}
+                          </span>
+                        )}
                         <button
                           type="button"
                           onClick={() => aumentarStockProducto(prod, false)}

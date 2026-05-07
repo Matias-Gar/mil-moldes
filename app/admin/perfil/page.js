@@ -21,7 +21,6 @@ export default function PerfilPage() {
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
         
         if (sessionError || !session?.user) {
-          console.log('❌ No hay sesión válida, redirigiendo...');
           router.push('/login');
           return;
         }

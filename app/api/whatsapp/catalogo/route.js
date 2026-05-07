@@ -1,8 +1,13 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
+// Configuración de Supabase directa
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error('Faltan variables de entorno de Supabase para WhatsApp.');
+}
 
 const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {

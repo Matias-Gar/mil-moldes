@@ -1,22 +1,26 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getSupabaseClient } from "../../../lib/SupabaseClient";
+import { supabase } from "../../../lib/SupabaseClient";
+import { useSucursalActiva } from "../../../components/admin/SucursalContext";
 
 export default function PedidosPage() {
   const [carritos, setCarritos] = useState([]);
   const router = useRouter();
+  const { activeSucursalId } = useSucursalActiva();
 
   useEffect(() => {
+    if (!activeSucursalId) return;
     fetchCarritos();
-  }, []);
+  }, [activeSucursalId]);
 
   async function fetchCarritos() {
-    const supabase = getSupabaseClient();
-    const { data, error } = await supabase
+    let query = supabase
       .from("carritos_pendientes")
-      .select("id, cliente_nombre, usuario_email, productos, fecha, confirmado_pago")
+      .select("id, cliente_nombre, cliente_telefono, usuario_email, productos, fecha, confirmado_pago")
       .order("fecha", { ascending: false });
+    if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+    const { data, error } = await query;
     
     if (!error && data) {
       const currentDate = new Date();
@@ -39,16 +43,18 @@ export default function PedidosPage() {
 
       // Eliminar los carritos vencidos de la base de datos
       for (const carrito of carritosVencidos) {
-        const supabase = getSupabaseClient();
-        await supabase.from("carritos_pendientes").delete().eq("id", carrito.id);
+        let deleteQuery = supabase.from("carritos_pendientes").delete().eq("id", carrito.id);
+        if (activeSucursalId) deleteQuery = deleteQuery.eq("sucursal_id", activeSucursalId);
+        await deleteQuery;
       }
     }
   }
 
   async function eliminarCarrito(id) {
     if (!window.confirm("¿Estás seguro de que deseas eliminar este pedido? Esta acción no se puede deshacer.")) return;
-    const supabase = getSupabaseClient();
-    await supabase.from("carritos_pendientes").delete().eq("id", id);
+    let query = supabase.from("carritos_pendientes").delete().eq("id", id);
+    if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+    await query;
     fetchCarritos();
   }
 
@@ -69,6 +75,7 @@ export default function PedidosPage() {
             <div key={c.id} className="bg-white rounded-xl shadow-xl border border-gray-900 p-4 flex flex-col gap-2">
               <div className="font-bold text-lg text-blue-900 mb-1">Pedido #{c.id}</div>
               <div className="text-gray-900 font-semibold">Cliente: {c.cliente_nombre || `Pedido #${c.id}`}</div>
+              <div className="text-gray-700 text-sm mb-1">NIT/CI: {c.cliente_telefono || '-'}</div>
               <div className="text-gray-700 text-sm mb-1">Email: {c.usuario_email || '-'}</div>
               <div className="text-gray-900 text-sm mb-1">Fecha: {new Date(c.fecha).toLocaleString()}</div>
               <div className="mb-2">
@@ -76,7 +83,7 @@ export default function PedidosPage() {
                 <ul className="list-disc pl-4">
                   {Array.isArray(c.productos) ? c.productos.map((p, i) => (
                     <li key={i} className="text-gray-900">
-                      {p.producto_id} {p.color ? `(${p.color})` : ''} x{p.cantidad} (Bs {Number(p.precio_unitario).toFixed(2)})
+                      {p.nombre || p.producto_id} {p.color ? `(${p.color})` : ''} {p.cantidad} {p.unidad || 'unidad'} (Bs {Number(p.precio_unitario).toFixed(2)})
                     </li>
                   )) : null}
                 </ul>

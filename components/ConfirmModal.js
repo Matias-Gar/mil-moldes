@@ -7,12 +7,17 @@ export default function ConfirmModal({
   detail,
   confirmLabel = "Guardar cambios",
   cancelLabel = "Seguir editando",
+  children,
 }) {
   if (!visible) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/55 backdrop-blur-sm p-4">
-      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
+      <div
+        className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="bg-gradient-to-r from-indigo-600 to-sky-500 px-6 py-5 text-white">
           <p className="text-xs font-semibold uppercase tracking-wide text-indigo-100">Validacion</p>
           <h3 className="mt-1 text-xl font-bold">{title}</h3>
@@ -21,6 +26,7 @@ export default function ConfirmModal({
         <div className="px-6 py-5 space-y-3">
           <p className="text-base font-semibold text-slate-900">{message}</p>
           {detail && <p className="text-sm text-slate-600">{detail}</p>}
+          {children}
           <p className="text-xs text-slate-500">Esta accion aplicara los cambios del formulario al producto seleccionado.</p>
         </div>
 

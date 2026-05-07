@@ -3,68 +3,396 @@
 // --- IMPORTS Y HOOKS NECESARIOS ---
 import React, { useState, useEffect } from "react";
 import Image from "next/image";
+import { usePathname } from "next/navigation";
 import { usePromociones } from "@/lib/usePromociones";
 import { usePacks, calcularDescuentoPack } from "@/lib/packs";
-import { getSupabaseClient } from "@/lib/SupabaseClient";
+import { supabase } from "@/lib/SupabaseClient";
 import { DEFAULT_STORE_SETTINGS, fetchStoreSettings } from "@/lib/storeSettings";
-import { PrecioConPromocion } from "@/lib/promociones";
+import { PrecioConPromocion, calcularPrecioConPromocion, PromoCompactBanner } from "@/lib/promociones";
 import { getOptimizedImageUrl } from "@/lib/imageOptimization";
+import { normalizeProductView } from "@/lib/productViews";
+import PublicSucursalSelector, { usePublicSucursal } from "@/components/PublicSucursalSelector";
+
+function UnitPricePanel({ conversionInfo, factor, className = "mb-3" }) {
+    if (!conversionInfo) return null;
+    const PriceValue = ({ original, final }) => (
+        <span className="flex shrink-0 flex-col items-end leading-tight">
+            {conversionInfo.tienePromocion && (
+                <span className="text-xs text-gray-800 line-through decoration-gray-800">
+                    Bs {original.toFixed(2)}
+                </span>
+            )}
+            <span className={`font-bold ${conversionInfo.tienePromocion ? 'text-green-600' : 'text-blue-700'}`}>
+                Bs {final.toFixed(2)}
+            </span>
+        </span>
+    );
+
+    return (
+        <div className={`${className} space-y-1 text-left`}>
+            <div className="space-y-0.5">
+                {conversionInfo.showBasePrice && (
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-gray-600 sm:text-sm">Por {conversionInfo.unidadBase}</span>
+                        <PriceValue original={conversionInfo.precioBaseOriginal} final={conversionInfo.precioBase} />
+                    </div>
+                )}
+                <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-gray-600 sm:text-sm">Por {conversionInfo.unidadAlternativa}</span>
+                    <PriceValue original={conversionInfo.precioAlternativoOriginal} final={conversionInfo.precioAlternativo} />
+                </div>
+            </div>
+            <div className="text-[11px] leading-tight text-gray-500">
+                1 {conversionInfo.unidadBase} = {Number(factor || 0).toFixed(2).replace(/\.00$/, '')} {conversionInfo.unidadAlternativa}
+            </div>
+            {conversionInfo.tienePromocion && (
+                <PromoCompactBanner
+                    porcentaje={conversionInfo.porcentajeDescuento}
+                    descripcion={conversionInfo.promocionDescripcion}
+                    fechaFin={conversionInfo.promocionFechaFin}
+                />
+            )}
+        </div>
+    );
+}
 
 
 // --- INICIO DEL FLUJO AVANZADO DEL CATÁLOGO ---
+function getEffectiveVariantStock(variant) {
+    const decimal = Number(variant?.stock_decimal);
+    const legacy = Number(variant?.stock);
+    return Math.max(0, Number.isFinite(decimal) && decimal > 0 ? decimal : legacy || 0);
+}
+
 export default function CatalogoPage() {
-    const supabase = getSupabaseClient();
-        const [modalWarning, setModalWarning] = useState("");
+        const pathname = usePathname();
+        const currentPublicView = pathname?.startsWith('/insumos') ? 'insumos' : 'articulos';
+        const {
+            sucursales,
+            activeSucursal,
+            activeSucursalId,
+            loading: sucursalesLoading,
+            error: sucursalesError,
+            setActiveSucursalId,
+        } = usePublicSucursal();
+        const cartStorageBaseKey = currentPublicView === 'insumos' ? 'carrito_temporal_insumos' : 'carrito_temporal';
+        const cartStorageKey = `${cartStorageBaseKey}_${activeSucursalId || 'global'}`;
+    const [modalWarning, setModalWarning] = useState("");
     const [modalImg, setModalImg] = useState(null);
     const [addToCartModal, setAddToCartModal] = useState(null);
     const [showCart, setShowCart] = useState(false);
     const [showConfirmOrder, setShowConfirmOrder] = useState(false);
     const [customerData, setCustomerData] = useState({ nombre: '', nit_ci: '' });
     // --- Declarar promociones usando el hook personalizado ---
-    const { promociones } = usePromociones();
+    const { promociones } = usePromociones(activeSucursalId);
                                 const [categoriaSeleccionada, setCategoriaSeleccionada] = useState('');
+                                const [busqueda, setBusqueda] = useState('');
                                 const [imagenesProductos, setImagenesProductos] = useState({});
                             const [productos, setProductos] = useState([]);
-                        const { packs, loading: loadingPacks } = usePacks();
+                        const { packs, loading: loadingPacks } = usePacks(activeSucursalId);
                     const [categorias, setCategorias] = useState([]);
                 const [storeSettings, setStoreSettings] = useState(DEFAULT_STORE_SETTINGS);
             const [cart, setCart] = useState([]);
         const [usuario, setUsuario] = useState(null);
+    const getAvailableUnits = (producto, stockBaseInput = null) => {
+        const unidadBase = String(producto?.unidad_base || 'unidad').trim() || 'unidad';
+        const alternativas = Array.isArray(producto?.unidades_alternativas)
+            ? producto.unidades_alternativas.map((u) => String(u || '').trim()).filter(Boolean)
+            : [];
+        const factor = Number(producto?.factor_conversion || 0);
+        const unidadAlternativa = alternativas.find((u) => u && u !== unidadBase);
+        if (!unidadAlternativa || !Number.isFinite(factor) || factor <= 0 || stockBaseInput === null) {
+            return [unidadBase, ...alternativas.filter((u) => u !== unidadBase)];
+        }
+        const stockBase = Math.max(0, Number(stockBaseInput) || 0);
+        const units = [];
+        if (stockBase >= 1) units.push(unidadBase);
+        if (stockBase * factor > 0) units.push(unidadAlternativa);
+        return units.length > 0 ? units : [unidadBase];
+    };
+    const toBaseQuantity = (cantidad, unidad, producto) => {
+        const qty = Number(cantidad || 0);
+        const factor = Number(producto?.factor_conversion || 0);
+        const unidadBase = String(producto?.unidad_base || 'unidad').trim() || 'unidad';
+        if (!Number.isFinite(qty) || qty <= 0) return 0;
+        if (unidad === unidadBase || !factor || factor <= 0) return qty;
+        return qty / factor;
+    };
+    const fromBaseQuantity = (cantidadBase, unidad, producto) => {
+        const qty = Number(cantidadBase || 0);
+        const factor = Number(producto?.factor_conversion || 0);
+        const unidadBase = String(producto?.unidad_base || 'unidad').trim() || 'unidad';
+        if (!Number.isFinite(qty) || qty <= 0) return 0;
+        if (unidad === unidadBase || !factor || factor <= 0) return qty;
+        return qty * factor;
+    };
+    const formatQuantity = (value) => {
+        const parsed = Number(value || 0);
+        if (!Number.isFinite(parsed)) return '0';
+        return Number(parsed.toFixed(2)).toString();
+    };
+    const normalizeUnitName = (unit) => String(unit || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+    const isDiscreteUnit = (unit) => {
+        const normalized = normalizeUnitName(unit);
+        return ['unidad', 'unidades', 'pieza', 'piezas', 'pza', 'pzas', 'par', 'pares', 'item', 'items', 'articulo', 'articulos'].includes(normalized);
+    };
+    const normalizeQuantityForUnit = (value, unit) => {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed) || parsed <= 0) return isDiscreteUnit(unit) ? 1 : 0.01;
+        return isDiscreteUnit(unit) ? Math.max(1, Math.floor(parsed)) : Math.max(0.01, parsed);
+    };
+    const getQuantityStepForUnit = (unit) => isDiscreteUnit(unit) ? 1 : 0.01;
+    const getQuantityMinForUnit = (unit) => isDiscreteUnit(unit) ? 1 : 0.01;
+    const getProductStockBase = (producto, varianteId = null) => {
+        const variantes = Array.isArray(producto?.variantes) ? producto.variantes : [];
+        const productStock = Math.max(0, Number(producto?.stock ?? producto?.stock_total ?? 0));
+        const totalVariantStock = variantes.reduce((acc, variante) => acc + getEffectiveVariantStock(variante), 0);
+        const hasUnitConversion =
+            Array.isArray(producto?.unidades_alternativas) &&
+            producto.unidades_alternativas.length > 0 &&
+            Number(producto?.factor_conversion || 0) > 0;
+        if (hasUnitConversion && varianteId === null && Number.isFinite(productStock)) {
+            return productStock > 0 ? productStock : totalVariantStock;
+        }
+        if (variantes.length > 0) {
+            if (varianteId !== null && varianteId !== undefined) {
+                const variante = variantes.find((v) => String(v.variante_id ?? v.id) === String(varianteId));
+                const variantStock = getEffectiveVariantStock(variante);
+                if (
+                    hasUnitConversion &&
+                    variantes.length === 1 &&
+                    Number.isFinite(productStock) &&
+                    productStock > 0 &&
+                    productStock < variantStock
+                ) {
+                    return productStock;
+                }
+                return getEffectiveVariantStock(variante);
+            }
+            return totalVariantStock > 0 || productStock <= 0 ? totalVariantStock : productStock;
+        }
+        return productStock;
+    };
+    const getCatalogIdentity = (producto) => {
+        const barcode = String(producto?.codigo_barra || '').trim();
+        if (barcode) return `barcode:${barcode}`;
+        return `name:${String(producto?.nombre || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()}`;
+    };
+    const dedupeCatalogProducts = (items) => {
+        const byIdentity = new Map();
+        (items || []).forEach((producto) => {
+            const key = getCatalogIdentity(producto);
+            const current = byIdentity.get(key);
+            const stock = getProductStockBase(producto);
+            const currentStock = current ? getProductStockBase(current) : -1;
+            if (!current || stock > currentStock || (stock === currentStock && Number(producto?.user_id || 0) < Number(current?.user_id || 0))) {
+                byIdentity.set(key, producto);
+            }
+        });
+        return Array.from(byIdentity.values());
+    };
+    const getStockBreakdown = (producto, stockBaseInput = null) => {
+        const stockBase = Math.max(0, Number(stockBaseInput ?? getProductStockBase(producto)) || 0);
+        const unidadBase = String(producto?.unidad_base || 'unidad').trim() || 'unidad';
+        const alternativas = Array.isArray(producto?.unidades_alternativas)
+            ? producto.unidades_alternativas.map((u) => String(u || '').trim()).filter(Boolean)
+            : [];
+        const unidadAlternativa = alternativas.find((u) => u && u !== unidadBase);
+        const factor = Number(producto?.factor_conversion || 0);
+        if (!unidadAlternativa || !Number.isFinite(factor) || factor <= 0) {
+            return {
+                agotado: stockBase <= 0,
+                principal: `${formatQuantity(stockBase)} ${unidadBase}`,
+                detalle: '',
+                fullBase: Math.floor(stockBase),
+                totalAlt: 0,
+            };
+        }
+        const fullBase = Math.floor(stockBase + 0.000001);
+        const remainingAlt = Math.max(0, (stockBase - fullBase) * factor);
+        const totalAlt = stockBase * factor;
+        let principal = `${formatQuantity(totalAlt)} ${unidadAlternativa}`;
+        let detalle = '';
+        if (fullBase > 0) {
+            principal = `${fullBase} ${unidadBase}${fullBase === 1 ? '' : 's'}`;
+            detalle = remainingAlt > 0
+                ? `+ ${formatQuantity(remainingAlt)} ${unidadAlternativa} sueltos`
+                : `${formatQuantity(totalAlt)} ${unidadAlternativa} en total`;
+        }
+        return { agotado: stockBase <= 0, principal, detalle, fullBase, totalAlt };
+    };
+    const getItemDisplayQuantity = (item) => Number(item?.cantidad_display ?? item?.cantidad ?? 0);
+    const getItemBaseQuantity = (item) => Number(item?.cantidad_base ?? item?.cantidad ?? 0);
+    const getItemSubtotal = (item) => Number(item?.precio || 0) * getItemBaseQuantity(item);
+    const getItemQuantityText = (item) => item?.tipo === 'pack'
+        ? `x${getItemDisplayQuantity(item)}`
+        : `${getItemDisplayQuantity(item)} ${item?.unidad || item?.unidad_base || 'unidad'}`;
+    const getConversionPriceInfo = (producto, stockBaseInput = null) => {
+        const unidadBase = String(producto?.unidad_base || 'unidad').trim() || 'unidad';
+        const alternativas = Array.isArray(producto?.unidades_alternativas)
+            ? producto.unidades_alternativas.map((u) => String(u || '').trim()).filter(Boolean)
+            : [];
+        const unidadAlternativa = alternativas.find((u) => u && u !== unidadBase);
+        const factor = Number(producto?.factor_conversion || 0);
+        const stockBase = Math.max(0, Number(stockBaseInput ?? getProductStockBase(producto)) || 0);
+
+        if (!unidadAlternativa || !Number.isFinite(factor) || factor <= 0) {
+            return null;
+        }
+
+        const precioInfo = calcularPrecioConPromocion(producto, promociones);
+
+        return {
+            unidadBase,
+            unidadAlternativa,
+            precioBase: Number(precioInfo.precioFinal || 0),
+            precioBaseOriginal: Number(precioInfo.precioOriginal || 0),
+            precioAlternativo: Number(precioInfo.precioFinal || 0) / factor,
+            precioAlternativoOriginal: Number(precioInfo.precioOriginal || 0) / factor,
+            tienePromocion: precioInfo.tienePromocion,
+            porcentajeDescuento: precioInfo.porcentajeDescuento,
+            promocionDescripcion: precioInfo.promocion?.descripcion || '',
+            promocionFechaFin: precioInfo.promocion?.fecha_fin || '',
+            showBasePrice: stockBase >= 1,
+        };
+    };
+    const mergeProductUnits = async (items) => {
+        const ids = items.map((item) => item.user_id).filter(Boolean);
+        if (ids.length === 0) return items;
+        try {
+            let productDetailsQuery = supabase
+                .from('productos')
+                .select('user_id, unidad_base, unidades_alternativas, factor_conversion, vista_producto, stock')
+                .in('user_id', ids);
+            let variantsQuery = supabase
+                .from('producto_variantes')
+                .select('producto_id, id, color, stock, stock_decimal, precio, imagen_url, sku')
+                .in('producto_id', ids);
+            if (activeSucursalId) {
+                productDetailsQuery = productDetailsQuery.eq('sucursal_id', activeSucursalId);
+                variantsQuery = variantsQuery.eq('sucursal_id', activeSucursalId);
+            }
+            const [{ data, error }, { data: variantRows }] = await Promise.all([
+                productDetailsQuery,
+                variantsQuery,
+            ]);
+            if (error || !Array.isArray(data)) return items;
+            const byId = new Map(data.map((row) => [String(row.user_id), row]));
+            const variantsByProductId = (Array.isArray(variantRows) ? variantRows : []).reduce((acc, row) => {
+                const key = String(row.producto_id);
+                if (!acc[key]) acc[key] = [];
+                acc[key].push({
+                    ...row,
+                    variante_id: row.id,
+                    stock_decimal: getEffectiveVariantStock(row),
+                    stock: Number(row.stock ?? 0),
+                });
+                return acc;
+            }, {});
+            return items.map((item) => {
+                const extra = byId.get(String(item.user_id));
+                const variantesReales = variantsByProductId[String(item.user_id)];
+                const variantes = Array.isArray(variantesReales) && variantesReales.length > 0
+                    ? variantesReales
+                    : item.variantes;
+                if (!extra) return item;
+                const variantStock = Array.isArray(variantes) && variantes.length > 0
+                    ? variantes.reduce((acc, v) => acc + getEffectiveVariantStock(v), 0)
+                    : 0;
+                const productStock = Number.isFinite(Number(extra.stock)) ? Math.max(0, Number(extra.stock)) : Math.max(0, Number(item.stock || 0));
+                const hasUnitConversion = Array.isArray(extra.unidades_alternativas) && extra.unidades_alternativas.length > 0 && Number(extra.factor_conversion || 0) > 0;
+                return {
+                    ...item,
+                    variantes,
+                    unidad_base: extra.unidad_base || item.unidad_base || 'unidad',
+                    unidades_alternativas: Array.isArray(extra.unidades_alternativas) ? extra.unidades_alternativas : item.unidades_alternativas,
+                    factor_conversion: Number(extra.factor_conversion || 0) || item.factor_conversion,
+                    vista_producto: normalizeProductView(extra.vista_producto),
+                    stock: hasUnitConversion
+                        ? (productStock > 0 ? productStock : variantStock)
+                        : (variantStock > 0 || productStock <= 0 ? variantStock : productStock)
+                };
+            });
+        } catch {
+            return items;
+        }
+    };
+    const visiblePacks = packs.filter((pack) =>
+        Array.isArray(pack.pack_productos) &&
+        pack.pack_productos.length > 0 &&
+        pack.pack_productos.every((item) =>
+            normalizeProductView(item.productos?.vista_producto) === currentPublicView ||
+            !item.productos?.vista_producto && productos.some((p) => String(p.user_id) === String(item.productos?.user_id))
+        )
+    );
     // --- Refactor: función de fetch fuera del useEffect para poder reutilizarla ---
     const fetchProductosYCategoriasYImagenes = async () => {
-        // Traer productos junto con sus variantes desde la tabla productos
-        const { data: productosData, error: productosError } = await supabase
-            .from('productos')
-            .select('user_id, nombre, descripcion, precio, imagen_url, category_id, categoria, stock, codigo_barra, producto_variantes(id, color, stock, precio, imagen_url)');
+        if (sucursalesLoading) return;
+        // Usar la misma vista pública que la home para evitar desajustes entre rutas.
+        let catalogQuery = supabase
+            .from('v_productos_catalogo')
+            .select('producto_id, nombre, descripcion, precio_base, imagen_base, category_id, categoria, stock_total, codigo_barra, variantes');
+        if (activeSucursalId) catalogQuery = catalogQuery.eq('sucursal_id', activeSucursalId);
+        const { data: productosData, error: productosError } = await catalogQuery;
         if (productosError || !productosData) {
             setProductos([]);
             setImagenesProductos({});
             return;
         }
-        const normalizedProducts = productosData.map((p) => ({
-            ...p,
-            user_id: p.user_id,
-            precio: Number(p.precio || 0),
-            stock: Array.isArray(p.producto_variantes) && p.producto_variantes.length > 0
-                ? p.producto_variantes.reduce((acc, v) => acc + Number(v.stock || 0), 0)
-                : Number(p.stock || 0),
-            variantes: Array.isArray(p.producto_variantes) ? p.producto_variantes : [],
-            imagen_url: p.imagen_url || null
-        }));
+        const normalizedBase = productosData.map((p) => ({
+                        ...p,
+                        user_id: p.producto_id,
+                        precio: Number(p.precio_base || 0),
+                        variantes: Array.isArray(p.variantes) ? p.variantes : [],
+                        imagen_url: p.imagen_base || null,
+                        stock: (() => {
+                                // Si tiene variantes, sumar stock de variantes
+                                if (Array.isArray(p.variantes) && p.variantes.length > 0) {
+                                        const stockBase = Number(p.stock_total || 0);
+                                const variantStock = p.variantes.reduce((acc, v) => acc + getEffectiveVariantStock(v), 0);
+                                const hasUnitConversion = Array.isArray(p.unidades_alternativas) && p.unidades_alternativas.length > 0 && Number(p.factor_conversion) > 0;
+                                return hasUnitConversion ? stockBase : (variantStock > 0 || stockBase <= 0 ? variantStock : stockBase);
+                                }
+                                const stockBase = Number(p.stock_total || 0);
+                                // Si hay conversión y unidades alternativas, calcular stock alternativo
+                                if (
+                                    Array.isArray(p.unidades_alternativas) &&
+                                    p.unidades_alternativas.length > 0 &&
+                                    Number(p.factor_conversion) > 0 &&
+                                    p.unidad_base
+                                ) {
+                                    const stockAlternativo = stockBase * Number(p.factor_conversion);
+                                    if (stockBase === 0 && stockAlternativo > 0) {
+                                        return stockAlternativo;
+                                    }
+                                }
+                                return stockBase;
+                        })()
+                }));
+        const normalizedProducts = dedupeCatalogProducts((await mergeProductUnits(normalizedBase))
+            .filter((p) => normalizeProductView(p.vista_producto) === currentPublicView));
         setProductos(normalizedProducts);
 
         // Traer categorías
-        const { data: categoriasData, error: categoriasError } = await supabase
+        let categoriasQuery = supabase
             .from('categorias')
             .select('*');
+        if (activeSucursalId) categoriasQuery = categoriasQuery.eq('sucursal_id', activeSucursalId);
+        const { data: categoriasData, error: categoriasError } = await categoriasQuery;
         if (!categoriasError && categoriasData) {
             setCategorias(categoriasData);
         }
 
         // Traer imágenes asociadas
-        const { data: imagenesData, error: imagenesError } = await supabase
+        let imagenesQuery = supabase
             .from('producto_imagenes')
             .select('producto_id, imagen_url');
+        if (activeSucursalId) imagenesQuery = imagenesQuery.eq('sucursal_id', activeSucursalId);
+        const { data: imagenesData, error: imagenesError } = await imagenesQuery;
         if (imagenesError || !imagenesData) {
             setImagenesProductos({});
             return;
@@ -81,7 +409,7 @@ export default function CatalogoPage() {
 
     useEffect(() => {
         fetchProductosYCategoriasYImagenes();
-    }, []);
+    }, [currentPublicView, activeSucursalId, sucursalesLoading]);
 
     // --- Recarga productos e imágenes al volver a la pestaña ---
     useEffect(() => {
@@ -94,7 +422,7 @@ export default function CatalogoPage() {
         return () => {
             document.removeEventListener('visibilitychange', handleVisibility);
         };
-    }, []);
+    }, [activeSucursalId, sucursalesLoading]);
 
     // Obtener usuario y perfil
     useEffect(() => {
@@ -179,25 +507,19 @@ export default function CatalogoPage() {
         }
     }, [usuario]);
 
-
-    // 1. Cargar productos y sus imágenes desde Supabase
-    useEffect(() => {
-        fetchProductosYCategoriasYImagenes();
-    }, []);
-
     // 2. Cargar carrito desde localStorage al inicio
     useEffect(() => {
-        const stored = localStorage.getItem('carrito_temporal');
-        if (stored) setCart(JSON.parse(stored));
-    }, []);
+        const stored = localStorage.getItem(cartStorageKey);
+        setCart(stored ? JSON.parse(stored) : []);
+    }, [cartStorageKey]);
 
     // 3. Guardar carrito en localStorage cada vez que cambia
     useEffect(() => {
-        localStorage.setItem('carrito_temporal', JSON.stringify(cart));
-    }, [cart]);
+        localStorage.setItem(cartStorageKey, JSON.stringify(cart));
+    }, [cart, cartStorageKey]);
 
     // --- Funciones del Carrito ---
-    
+
     // Función helper para obtener el precio final de un producto (con promoción si aplica)
     const getPrecioFinal = (producto) => {
         const promocion = promociones.find(function(promo) {
@@ -235,22 +557,61 @@ export default function CatalogoPage() {
     const getVariantes = (producto) => (Array.isArray(producto.variantes) ? producto.variantes : []);
 
     const getStockDisponibleProducto = (producto, varianteId = null) => {
-        const variantes = getVariantes(producto);
+                const variantes = getVariantes(producto);
+                const productStock = Math.max(0, Number(producto?.stock || 0));
+                const hasUnitConversion =
+                    Array.isArray(producto?.unidades_alternativas) &&
+                    producto.unidades_alternativas.length > 0 &&
+                    Number(producto?.factor_conversion || 0) > 0;
 
-        if (variantes.length > 0) {
-            if (varianteId !== null && varianteId !== undefined) {
-                // Usar función tradicional para evitar error de tipado implícito en JS
-                const variante = variantes.find(function(v) { return String(v.variante_id ?? v.id) === String(varianteId); });
-                return Math.max(0, Number(variante?.stock || 0));
-            }
-            const totalDisponible = variantes.reduce(function(acc, v) { return acc + Math.max(0, Number(v?.stock || 0)); }, 0);
-            return Math.max(0, totalDisponible);
-        }
+                if (variantes.length > 0) {
+                        if (varianteId !== null && varianteId !== undefined) {
+                                const variante = variantes.find(function(v) { return String(v.variante_id ?? v.id) === String(varianteId); });
+                                const variantStock = getEffectiveVariantStock(variante);
+                                if (hasUnitConversion && variantes.length === 1 && Number.isFinite(productStock)) {
+                                    return productStock > 0 ? productStock : variantStock;
+                                }
+                                return variantStock;
+                        }
+                        const totalDisponible = variantes.reduce(function(acc, v) { return acc + getEffectiveVariantStock(v); }, 0);
+                        if (hasUnitConversion) return productStock > 0 ? productStock : totalDisponible;
+                        return Math.max(0, totalDisponible);
+                }
 
-        return Math.max(0, Number(producto?.stock || 0));
+                // Stock base
+                const stockBase = productStock;
+                // Si hay conversión y unidades alternativas, calcular stock alternativo
+                if (
+                    Array.isArray(producto.unidades_alternativas) &&
+                    producto.unidades_alternativas.length > 0 &&
+                    Number(producto.factor_conversion) > 0 &&
+                    producto.unidad_base
+                ) {
+                    // Si el stock base es 0, pero el alternativo es mayor a 0, devolver stock alternativo
+                    const stockAlternativo = stockBase * Number(producto.factor_conversion);
+                    if (stockBase === 0 && stockAlternativo > 0) {
+                        return stockAlternativo;
+                    }
+                }
+                return stockBase;
     };
 
-    const isProductoAgotado = (producto) => getStockDisponibleProducto(producto) <= 0;
+        const isProductoAgotado = (producto) => {
+            const stockBase = Math.max(0, Number(producto?.stock || 0));
+            // Si hay conversión y unidades alternativas, considerar stock alternativo
+            if (
+                Array.isArray(producto.unidades_alternativas) &&
+                producto.unidades_alternativas.length > 0 &&
+                Number(producto.factor_conversion) > 0 &&
+                producto.unidad_base
+            ) {
+                const stockAlternativo = stockBase * Number(producto.factor_conversion);
+                if (stockBase === 0 && stockAlternativo > 0) {
+                    return false; // No está agotado si hay stock alternativo
+                }
+            }
+            return getStockDisponibleProducto(producto) <= 0;
+        };
 
     const getStockDisponibleItem = (item) => {
         if (item?.tipo === 'pack') return 999;
@@ -263,22 +624,26 @@ export default function CatalogoPage() {
 
     const openAddToCartModal = (producto) => {
         const variantes = getVariantes(producto);
-        const defaultVariante = variantes.find(function(v) { return Number(v?.stock || 0) > 0; }) || null;
+        const defaultVariante = variantes.find(function(v) { return getEffectiveVariantStock(v) > 0; }) || null;
         const defaultVarianteId = defaultVariante ? (defaultVariante.variante_id ?? defaultVariante.id) : null;
+        const defaultStockBase = defaultVariante
+            ? getEffectiveVariantStock(defaultVariante)
+            : getProductStockBase(producto);
+        const unidades = getAvailableUnits(producto, defaultStockBase);
 
         setAddToCartModal({
             producto,
             variantes,
             selectedVarianteId: defaultVarianteId,
-            cantidad: 1
+            cantidad: 1,
+            unidad: unidades[0]
         });
     };
 
     const confirmAddToCart = async () => {
         if (!addToCartModal?.producto) return;
         setModalWarning("");
-        const { producto, variantes, selectedVarianteId, cantidad } = addToCartModal;
-        const quantity = Math.max(1, Number(cantidad) || 1);
+        const { producto, variantes, selectedVarianteId, cantidad, unidad } = addToCartModal;
         let varianteSeleccionada = {
             variante_id: null,
             color: null,
@@ -290,22 +655,34 @@ export default function CatalogoPage() {
         let productoDB = null;
         let varianteDB = null;
         try {
-            const { data: prod } = await supabase
+            let prodWithUnitsQuery = supabase
                 .from('productos')
-                .select('user_id, nombre, precio, imagen_url, stock')
-                .eq('user_id', producto.user_id)
-                .maybeSingle();
-            productoDB = prod;
+                .select('user_id, nombre, precio, imagen_url, stock, unidad_base, unidades_alternativas, factor_conversion')
+                .eq('user_id', producto.user_id);
+            if (activeSucursalId) prodWithUnitsQuery = prodWithUnitsQuery.eq('sucursal_id', activeSucursalId);
+            const { data: prodWithUnits, error: prodWithUnitsError } = await prodWithUnitsQuery.maybeSingle();
+            if (prodWithUnitsError) {
+                let prodFallbackQuery = supabase
+                    .from('productos')
+                    .select('user_id, nombre, precio, imagen_url, stock')
+                    .eq('user_id', producto.user_id);
+                if (activeSucursalId) prodFallbackQuery = prodFallbackQuery.eq('sucursal_id', activeSucursalId);
+                const { data: prodFallback } = await prodFallbackQuery.maybeSingle();
+                productoDB = prodFallback;
+            } else {
+                productoDB = prodWithUnits;
+            }
             if (variantes.length > 0) {
                 if (!selectedVarianteId) {
                     setModalWarning('Debes seleccionar un color para continuar.');
                     return;
                 }
-                const { data: varData } = await supabase
+                let variantQuery = supabase
                     .from('producto_variantes')
-                    .select('id, color, stock, precio, imagen_url')
-                    .eq('id', selectedVarianteId)
-                    .maybeSingle();
+                    .select('id, color, stock, stock_decimal, precio, imagen_url')
+                    .eq('id', selectedVarianteId);
+                if (activeSucursalId) variantQuery = variantQuery.eq('sucursal_id', activeSucursalId);
+                const { data: varData } = await variantQuery.maybeSingle();
                 varianteDB = varData;
             }
         } catch (e) {
@@ -323,7 +700,15 @@ export default function CatalogoPage() {
                 setModalWarning('Selecciona un color válido para continuar.');
                 return;
             }
-            if (Number(varianteDB.stock || 0) <= 0) {
+            const hasUnitConversionForSale =
+                Array.isArray(productoDB?.unidades_alternativas) &&
+                productoDB.unidades_alternativas.length > 0 &&
+                Number(productoDB?.factor_conversion || producto.factor_conversion || 0) > 0;
+            const stockProductoActual = Math.max(0, Number(productoDB?.stock || 0));
+            const stockVarianteActual = hasUnitConversionForSale && variantes.length === 1
+                ? (stockProductoActual > 0 ? stockProductoActual : getEffectiveVariantStock(varianteDB))
+                : getEffectiveVariantStock(varianteDB);
+            if (stockVarianteActual <= 0) {
                 setModalWarning('Esa opción está agotada. Elige otra disponible.');
                 return;
             }
@@ -332,7 +717,7 @@ export default function CatalogoPage() {
                 color: varianteDB.color || null,
                 precio: Number(varianteDB.precio ?? productoDB.precio ?? 0)
             };
-            stockDisponible = Math.max(0, Number(varianteDB.stock || 0));
+            stockDisponible = stockVarianteActual;
         } else if (!productoDB || stockDisponible <= 0) {
             setModalWarning('Producto agotado por el momento.');
             return;
@@ -342,6 +727,9 @@ export default function CatalogoPage() {
 
         const productoConVariante = {
             ...producto,
+            unidad_base: productoDB?.unidad_base || producto.unidad_base,
+            unidades_alternativas: Array.isArray(productoDB?.unidades_alternativas) ? productoDB.unidades_alternativas : producto.unidades_alternativas,
+            factor_conversion: Number(productoDB?.factor_conversion || producto.factor_conversion || 0) || undefined,
             nombre: productoDB?.nombre || producto.nombre,
             imagen_url: varianteDB?.imagen_url || productoDB?.imagen_url || producto.imagen_url,
             variante_id: varianteSeleccionada.variante_id,
@@ -350,22 +738,31 @@ export default function CatalogoPage() {
         };
 
         const precioFinal = getPrecioFinal(productoConVariante);
-        const cartKey = getCartKey(productoConVariante);
+        const selectedUnit = String(unidad || productoConVariante.unidad_base || 'unidad');
+        const quantity = normalizeQuantityForUnit(cantidad, selectedUnit);
+        const unidadesVenta = getAvailableUnits(productoConVariante, stockDisponible);
+        if (!unidadesVenta.includes(selectedUnit)) {
+            setModalWarning(`Ya no queda ${productoConVariante.unidad_base || 'unidad'} completo. Selecciona ${(unidadesVenta[0] || 'otra unidad')}.`);
+            setAddToCartModal(prev => prev ? { ...prev, unidad: unidadesVenta[0] || selectedUnit } : prev);
+            return;
+        }
+        const requestedBaseQuantity = toBaseQuantity(quantity, selectedUnit, productoConVariante);
+        const cartKey = `${getCartKey(productoConVariante)}:${selectedUnit}`;
 
         // Validar stock antes de modificar el carrito
         const idx = cart.findIndex(p => (p.cart_key || getCartKey(p)) === cartKey);
-        const cantidadActual = idx !== -1 ? Number(cart[idx].cantidad || 0) : 0;
+        const cantidadActual = idx !== -1 ? getItemBaseQuantity(cart[idx]) : 0;
         const disponibleParaAgregar = Math.max(0, stockDisponible - cantidadActual);
 
         if (disponibleParaAgregar <= 0) {
-            setModalWarning(`Lo sentimos, el stock actual que puede pedir es ${stockDisponible}.`);
+            setModalWarning(`Lo sentimos, el stock actual que puede pedir es ${fromBaseQuantity(stockDisponible, selectedUnit, productoConVariante)} ${selectedUnit}.`);
             return;
         }
 
-        if (quantity > disponibleParaAgregar) {
+        if (requestedBaseQuantity > disponibleParaAgregar) {
             const mensaje = cantidadActual > 0
                 ? `Lo sentimos, el stock actual que puede pedir es ${stockDisponible}. Ya tienes ${cantidadActual} en tu cesta, puedes agregar hasta ${disponibleParaAgregar} más.`
-                : `Lo sentimos, el stock actual que puede pedir es ${stockDisponible}.`;
+                : `Lo sentimos, el stock actual que puede pedir es ${fromBaseQuantity(stockDisponible, selectedUnit, productoConVariante)} ${selectedUnit}.`;
             setModalWarning(mensaje);
             return;
         }
@@ -375,10 +772,24 @@ export default function CatalogoPage() {
             const idxPrev = prev.findIndex(p => (p.cart_key || getCartKey(p)) === cartKey);
             if (idxPrev !== -1) {
                 const updated = [...prev];
-                updated[idxPrev] = { ...updated[idxPrev], cantidad: updated[idxPrev].cantidad + quantity };
+                updated[idxPrev] = {
+                    ...updated[idxPrev],
+                    unidad: selectedUnit,
+                    cantidad: getItemDisplayQuantity(updated[idxPrev]) + quantity,
+                    cantidad_display: getItemDisplayQuantity(updated[idxPrev]) + quantity,
+                    cantidad_base: getItemBaseQuantity(updated[idxPrev]) + requestedBaseQuantity
+                };
                 return updated;
             }
-            return [...prev, { ...productoConVariante, cart_key: cartKey, cantidad: quantity, precio: precioFinal }];
+            return [...prev, {
+                ...productoConVariante,
+                cart_key: cartKey,
+                unidad: selectedUnit,
+                cantidad: quantity,
+                cantidad_display: quantity,
+                cantidad_base: requestedBaseQuantity,
+                precio: precioFinal
+            }];
         });
         setAddToCartModal(null);
         setModalWarning("");
@@ -393,12 +804,14 @@ export default function CatalogoPage() {
                 const maxStock = getStockDisponibleItem(item);
                 if (maxStock <= 0) return [];
 
-                const requested = Math.max(1, Number(newQty) || 1);
-                if (requested > maxStock) {
-                    alert(`Lo sentimos, el stock actual que puede pedir es ${maxStock}.`);
+                const requested = Math.max(0.01, Number(newQty) || 1);
+                const requestedBase = toBaseQuantity(requested, item.unidad, item);
+                if (requestedBase > maxStock) {
+                    alert(`Lo sentimos, el stock actual que puede pedir es ${fromBaseQuantity(maxStock, item.unidad, item)} ${item.unidad || item.unidad_base || 'unidad'}.`);
                 }
-                const quantity = Math.max(1, Math.min(requested, maxStock));
-                return [{ ...item, cantidad: quantity }];
+                const quantityBase = Math.max(0.01, Math.min(requestedBase, maxStock));
+                const quantityDisplay = fromBaseQuantity(quantityBase, item.unidad, item);
+                return [{ ...item, cantidad: quantityDisplay, cantidad_display: quantityDisplay, cantidad_base: quantityBase }];
             })
         );
     };
@@ -414,7 +827,7 @@ export default function CatalogoPage() {
             alert("Tu cesta está vacía. Agrega productos para enviar un pedido.");
             return;
         }
-        
+
         // Auto-llenar datos si el usuario está logueado
         if (usuario) {
             // ...existing code...
@@ -423,7 +836,7 @@ export default function CatalogoPage() {
                 nit_ci: usuario.nit_ci || prevData.nit_ci || ''
             }));
         }
-        
+
         setShowCart(false);
         setShowConfirmOrder(true);
     };
@@ -439,7 +852,15 @@ export default function CatalogoPage() {
         let nombreFinal = customerData.nombre || (usuario && usuario.nombre) || null;
         let nitciLlenado = customerData.nit_ci || (usuario && usuario.nit_ci) || null;
         let emailFinal = usuario && usuario.email ? usuario.email : null;
-        
+
+        // Importar el token anónimo
+        let carritoToken = null;
+        if (typeof window !== 'undefined') {
+            try {
+                carritoToken = localStorage.getItem('carrito_token');
+            } catch {}
+        }
+
         // Insertar y obtener el número de pedido (id)
         const { data, error } = await supabase.from("carritos_pendientes").insert([
             {
@@ -453,10 +874,12 @@ export default function CatalogoPage() {
                             tipo: 'pack',
                             pack_id: p.pack_id,
                             nombre: p.nombre,
-                            cantidad: p.cantidad,
+                            cantidad: getItemDisplayQuantity(p),
+                            cantidad_base: getItemBaseQuantity(p),
                             precio_unitario: p.precio,
                             productos: p.pack_data?.pack_productos?.map(pp => ({
                                 producto_id: pp.productos.user_id,
+                                variante_id: pp.variante_id || null,
                                 nombre: pp.productos.nombre,
                                 cantidad: pp.cantidad
                             })) || []
@@ -467,18 +890,28 @@ export default function CatalogoPage() {
                         producto_id: p.user_id,
                         variante_id: p.variante_id || null,
                         color: p.color || null,
-                        cantidad: p.cantidad,
-                        precio_unitario: p.precio
+                        unidad: p.unidad || p.unidad_base || 'unidad',
+                        unidad_base: p.unidad_base || p.unidad || 'unidad',
+                        unidades_alternativas: Array.isArray(p.unidades_alternativas) ? p.unidades_alternativas : [],
+                        factor_conversion: Number(p.factor_conversion || 0) || null,
+                        cantidad: getItemDisplayQuantity(p),
+                        cantidad_base: getItemBaseQuantity(p),
+                        precio_unitario: p.precio,
+                        precio_original: p.precio_original ?? p.precio,
+                        promocion_aplicada: p.promocion_aplicada || null,
+                        nombre: p.nombre || null
                     };
                 }),
+                carrito_token: carritoToken || null,
+                sucursal_id: activeSucursalId || null,
             }
         ]).select('id').single();
-        
+
         if (error || !data) {
             alert(`No se pudo guardar el pedido. Error: ${error?.message || 'Error desconocido'}. Por favor intenta de nuevo.`);
             return;
         }
-        
+
         const pedidoId = data.id;
 
         // 📊 Track Facebook Pixel - Purchase
@@ -487,29 +920,30 @@ export default function CatalogoPage() {
 
         // 2. Preparar mensaje WhatsApp
         const itemsList = cart.map(item => {
-            const subtotal = (item.precio * item.cantidad).toFixed(2); 
-            return `*${item.cantidad}x* ${item.nombre} - (Bs ${subtotal})`;
+            const cantidadTexto = getItemQuantityText(item);
+            const subtotal = getItemSubtotal(item).toFixed(2);
+            return `*${cantidadTexto}* ${item.nombre} - (Bs ${subtotal})`;
         }).join('\n');
-        
-        const total = cart.reduce((sum, item) => sum + item.precio * item.cantidad, 0).toFixed(2);
+
+        const total = cart.reduce((sum, item) => sum + getItemSubtotal(item), 0).toFixed(2);
         const nombreTexto = nombreFinal ? `Nombre: ${nombreFinal}\n` : '';
         const nitciTexto = nitciLlenado ? `NIT/CI: ${nitciLlenado}\n` : '';
         const pedidoTexto = `N° Pedido: ${pedidoId}`;
-        
+
         const message = encodeURIComponent(
             `¡Hola! Me gustaría hacer el siguiente pedido:\n\n${pedidoTexto}\n${nombreTexto}${nitciTexto}\n${itemsList}\n\n*Total:* Bs ${total}\n\n¡Gracias!`
         );
-        
+
         const whatsappNumber = storeSettings?.whatsapp_number || CONFIG.WHATSAPP_BUSINESS;
         const whatsappURL = `https://wa.me/${whatsappNumber}?text=${message}`;
         window.open(whatsappURL, '_blank');
-        
+
         // Limpiar carrito y cerrar modales
         setShowConfirmOrder(false);
         setCart([]);
         setCustomerData({ nombre: '', nit_ci: '' });
-        localStorage.removeItem('carrito_temporal');
-        
+        localStorage.removeItem(cartStorageKey);
+
         // Mensaje de éxito
         alert("¡Pedido enviado exitosamente! Se ha abierto WhatsApp para completar tu pedido.");
     };
@@ -602,10 +1036,23 @@ export default function CatalogoPage() {
         return { backgroundColor: '#9CA3AF' };
     };
 
+    const categoriasVisibles = Array.isArray(categorias)
+        ? categorias.filter((cat) => productos.some((producto) => Number(producto.category_id) === Number(cat.id)))
+        : [];
+
     // --- Renderizado ---
 
     return (
         <div className="min-h-screen bg-gray-50 p-4 sm:p-8 relative">
+            <PublicSucursalSelector
+                activeSucursal={activeSucursal}
+                activeSucursalId={activeSucursalId}
+                currentPublicView={currentPublicView}
+                error={sucursalesError}
+                loading={sucursalesLoading}
+                setActiveSucursalId={setActiveSucursalId}
+                sucursales={sucursales}
+            />
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-3xl font-extrabold text-gray-900 text-center flex items-center gap-2">
                     {storeSettings?.store_logo_url ? (
@@ -613,14 +1060,46 @@ export default function CatalogoPage() {
                             ) : (
                                 <Image src="/free-shopping-icons-vector.jpg" alt="icono pedido" width={36} height={36} className="inline-block align-middle mr-2 rounded" />
                             )}
-                    {storeSettings?.store_name ? `Pedido en ${storeSettings.store_name}` : 'Realiza tu pedido'}
+                    {storeSettings?.store_name
+                        ? `${currentPublicView === 'insumos' ? 'Pedido de insumos en' : 'Pedido en'} ${storeSettings.store_name}`
+                        : currentPublicView === 'insumos' ? 'Realiza tu pedido de insumos' : 'Realiza tu pedido'}
                 </h1>
             </div>
 
 
             {/* FILTRO POR CATEGORÍA - DESPLEGABLE COMPACTO PARA MÓVIL */}
-            {categorias.length > 0 && (
+            <div className="mb-5 rounded-xl bg-white p-3 shadow-lg">
+                <input
+                    type="search"
+                    value={busqueda}
+                    onChange={(e) => setBusqueda(e.target.value)}
+                    placeholder={currentPublicView === 'insumos' ? 'Buscar insumo, color o categoria' : 'Buscar producto, color o categoria'}
+                    className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm font-semibold text-gray-800 outline-none transition focus:border-green-500 focus:ring-2 focus:ring-green-200"
+                />
+            </div>
+
+            {categoriasVisibles.length > 0 && (
+                <>
                 <div className="mb-6">
+                    <div className="flex gap-2 overflow-x-auto px-2 pb-2 sm:flex-wrap sm:justify-center sm:overflow-visible sm:px-0">
+                        <button
+                            className={`shrink-0 rounded-full border px-4 py-2 text-sm font-bold transition-all duration-200 ${!categoriaSeleccionada ? 'bg-violet-600 text-white shadow-md' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+                            onClick={() => setCategoriaSeleccionada('')}
+                        >
+                            Todas las Categorias
+                        </button>
+                        {categoriasVisibles.map(cat => (
+                            <button
+                                key={cat.id}
+                                className={`shrink-0 rounded-full border px-4 py-2 text-sm font-bold transition-all duration-200 ${Number(categoriaSeleccionada) === Number(cat.id) ? 'bg-violet-600 text-white shadow-md' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+                                onClick={() => setCategoriaSeleccionada(cat.id.toString())}
+                            >
+                                {cat.categori || cat.nombre || '-'}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+                <div className="hidden">
                     {/* Versión móvil - Selector desplegable compacto */}
                     <div className="block sm:hidden">
                         <div className="bg-white rounded-xl shadow-lg p-3 mx-2">
@@ -639,19 +1118,20 @@ export default function CatalogoPage() {
                         </div>
                     </div>
                 </div>
+                </>
             )}
 
             {/* SECCIÓN DE PACKS ESPECIALES */}
-            {!loadingPacks && packs.length > 0 && (
+            {!loadingPacks && visiblePacks.length > 0 && (
                 <div className="mb-8">
                     <h2 className="text-2xl font-bold text-purple-800 mb-4 text-center">
                         📦 Packs Especiales - ¡Combos con Descuento!
                     </h2>
-                    
+
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-                        {packs.map((pack) => {
+                        {visiblePacks.map((pack) => {
                             const { precioIndividual, descuentoAbsoluto, descuentoPorcentaje } = calcularDescuentoPack(pack);
-                            
+
                             return (
                                 <div key={pack.id} className="bg-gradient-to-br from-purple-50 to-purple-100 border-2 border-purple-300 rounded-lg p-4 shadow-md hover:shadow-lg transition-all duration-200">
                                     {/* Header */}
@@ -722,7 +1202,7 @@ export default function CatalogoPage() {
                                             const productosConVariantes = (pack.pack_productos || []).map((item, idx) => {
                                                 // Buscar el producto real en la lista global para obtener variantes actualizadas
                                                 const productoReal = productos.find(p => String(p.user_id) === String(item.productos.user_id));
-                                                const variantes = Array.isArray(productoReal?.variantes) ? productoReal.variantes.filter(v => Number(v?.stock || 0) > 0) : [];
+                                                const variantes = Array.isArray(productoReal?.variantes) ? productoReal.variantes.filter(v => getEffectiveVariantStock(v) > 0) : [];
                                                 return {
                                                     ...item,
                                                     productos: productoReal || item.productos,
@@ -757,23 +1237,33 @@ export default function CatalogoPage() {
             )}
 
             {/* LISTA DE PRODUCTOS - OPTIMIZADA PARA MÓVIL */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-6">
+            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-6">
                 {Array.isArray(productos) && productos.length > 0 ? (
                     (() => {
                         const productosFiltrados = productos.filter(producto => {
+                            const term = busqueda.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+                            const matchesBusqueda = !term || [
+                                producto.nombre,
+                                producto.descripcion,
+                                producto.categoria,
+                                producto.categorias?.categori,
+                                producto.codigo_barra,
+                                ...(Array.isArray(producto.variantes) ? producto.variantes.map((v) => v?.color) : []),
+                            ].some((value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().includes(term));
+                            if (!matchesBusqueda) return false;
                             if (!categoriaSeleccionada) return true;
-                            const match = Number(producto.category_id) === Number(categoriaSeleccionada);
-                            return match;
+                            return Number(producto.category_id) === Number(categoriaSeleccionada);
                         });
-                        
+
                         // ...existing code...
-                        
+
                         return productosFiltrados.map((producto, idx) => {
                             const quantityInCart = cart
                                 .filter(item => item.tipo !== 'pack' && String(item.user_id) === String(producto.user_id))
                                 .reduce((acc, item) => acc + Number(item.cantidad || 0), 0);
                             const isInCart = quantityInCart > 0;
                             const agotado = isProductoAgotado(producto);
+                            const conversionInfo = !agotado ? getConversionPriceInfo(producto) : null;
                             const imagenes = (() => {
                                 const imgs = Array.isArray(imagenesProductos[producto.user_id]) ? imagenesProductos[producto.user_id] : [];
                                 // Si hay más de una imagen, la segunda es la principal (como miniatura portada)
@@ -790,19 +1280,19 @@ export default function CatalogoPage() {
                             return (
                                 <div
                                     key={producto.user_id ? producto.user_id : 'producto-' + idx}
-                                    className="bg-white border border-gray-200 rounded-xl p-3 sm:p-4 shadow-lg flex flex-col transition-shadow duration-300 hover:shadow-xl"
+                                    className={`relative overflow-hidden bg-white border rounded-lg p-1.5 sm:p-3 shadow-lg flex flex-col transition-shadow duration-300 hover:shadow-xl ${agotado ? 'border-gray-900' : 'border-gray-200'}`}
                                 >
                                     <div className="relative">
                                         {Array.isArray(imagenes) && imagenes.length > 0 && typeof imagenes[0] === 'string' ? (
-                                            <div className="w-full h-32 sm:h-40 mb-2 overflow-hidden rounded-lg relative group cursor-pointer">
+                                            <div className={`w-full ${agotado ? 'h-24 sm:h-32 mb-1' : 'h-28 sm:h-36 mb-1.5'} overflow-hidden rounded-lg relative group cursor-pointer`}>
                                                 <Image
                                                     src={getOptimizedImageUrl(imagenes[0], 900, { quality: 96, format: 'origin' })}
                                                     alt={producto.nombre}
                                                     width={300}
                                                     height={200}
                                                     quality={96}
-                                                    sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
-                                                    className="object-cover w-full h-full transition-transform duration-200 group-hover:scale-105"
+                                                    sizes="(max-width: 640px) 50vw, (max-width: 1024px) 50vw, 25vw"
+                                                    className={`object-cover w-full h-full transition-transform duration-200 group-hover:scale-105 ${agotado ? 'grayscale' : ''}`}
                                                     onClick={() => setModalImg({ urls: imagenes, index: 0, nombre: producto.nombre })}
                                                     onError={e => { e.target.onerror = null; e.target.src = 'https://placehold.co/300x200/cccccc/333333?text=Sin+Imagen'; }}
                                                 />
@@ -821,21 +1311,27 @@ export default function CatalogoPage() {
                                                 )}
                                             </div>
                                         ) : (
-                                            <div className="w-full h-40 mb-2 bg-gray-100 flex flex-col items-center justify-center rounded-lg relative">
+                                            <div className="w-full h-28 sm:h-36 mb-1.5 bg-gray-100 flex flex-col items-center justify-center rounded-lg relative">
                                                 <span className="text-gray-400 text-center">Sin imagen</span>
                                             </div>
                                         )}
                                     </div>
-                                    <div className="flex-1 flex flex-col">
-                                        <div className="text-xs sm:text-sm text-gray-600 font-medium mb-1">{categoria ? (categoria.categori || categoria.nombre) : '-'}</div>
-                                        <div className="text-sm sm:text-lg font-bold mb-2 line-clamp-2 text-gray-900">{producto.nombre}</div>
-                                        
+                                    <div className={`flex-1 flex flex-col ${agotado ? 'pb-9' : ''}`}>
+                                        <div className={`text-xs sm:text-sm text-gray-600 font-medium ${agotado ? 'mb-0.5' : 'mb-1'}`}>{categoria ? (categoria.categori || categoria.nombre) : '-'}</div>
+                                        <div className={`${agotado ? 'text-[13px] sm:text-base mb-0.5 leading-tight' : 'text-[13px] sm:text-base mb-1 leading-tight'} font-bold line-clamp-2 text-gray-900`}>{producto.nombre}</div>
+
                                         {/* Usar el componente de precio con promoción */}
-                                        <PrecioConPromocion 
-                                            producto={producto} 
-                                            promociones={promociones}
-                                            className="mb-1"
-                                        />
+                                        {!agotado && !conversionInfo && (
+                                            <PrecioConPromocion
+                                                producto={producto}
+                                                promociones={promociones}
+                                                className="mb-0.5"
+                                            />
+                                        )}
+                                        {(() => {
+                                            if (!conversionInfo) return null;
+                                            return <UnitPricePanel conversionInfo={conversionInfo} factor={producto.factor_conversion} />;
+                                        })()}
                                         {/* Mostrar colores disponibles como paleta de círculos */}
                                         {/* Mostrar colores disponibles como paleta de círculos */}
                                         {(() => {
@@ -846,13 +1342,13 @@ export default function CatalogoPage() {
                                                                                                         .replace(/[\u0300-\u036f]/g, '')
                                                                                                         .toLowerCase()
                                                                                                         .trim();
-                                                                                                    return Number(v?.stock || 0) > 0 && colorNormalizado && colorNormalizado !== 'unico';
+                                                                                                    return getEffectiveVariantStock(v) > 0 && colorNormalizado && colorNormalizado !== 'unico';
                                                                                                 })
                                                                                             : [];
                                             if (coloresEnStock.length <= 1) return null;
                                             return (
-                                              <div className="mt-2">
-                                                  <p className="text-xs text-gray-600 font-medium mb-1.5">Disponible en color:</p>
+                                              <div className="mt-1.5">
+                                                  <p className="text-[11px] text-gray-600 font-medium mb-1">Disponible en color:</p>
                                                   <div className="flex gap-1.5 flex-wrap">
                                                       {coloresEnStock.map((v, vIdx) => {
                                                               const colorStyle = getColorStyle(v.color);
@@ -875,15 +1371,19 @@ export default function CatalogoPage() {
                                               </div>
                                             );
                                         })()}
-                                        {agotado && (
-                                            <span className="mt-2 inline-flex self-start bg-red-100 text-red-700 text-xs font-bold px-2 py-1 rounded-md">
-                                                Agotado
-                                            </span>
-                                        )}
+                                                                                {agotado ? (
+                                                                                        <span className="mt-1 inline-flex self-start bg-red-100 text-red-700 text-[11px] font-bold px-2 py-0.5 rounded-md">
+                                                                                                Agotado
+                                                                                        </span>
+                                                                                ) : (
+                                                                                    <span className="mt-1 inline-flex self-start bg-green-100 text-green-700 text-[11px] font-bold px-2 py-0.5 rounded-md">
+                                                                                        Disponible
+                                                                                    </span>
+                                                                                )}
                                     </div>
                                     <button
                                         disabled={agotado}
-                                        className={`mt-3 sm:mt-4 w-full sm:w-auto sm:self-end ${agotado ? 'bg-gray-400 cursor-not-allowed' : isInCart ? 'bg-orange-500 hover:bg-orange-600' : 'bg-green-600 hover:bg-green-700'} text-white rounded-lg sm:rounded-full px-4 py-2 sm:w-9 sm:h-9 flex items-center justify-center text-sm sm:text-2xl font-bold shadow-xl focus:outline-none transition-colors duration-150`}
+                                        className={`mt-2 sm:mt-3 w-full sm:w-auto sm:self-end ${agotado ? 'bg-gray-400 cursor-not-allowed' : isInCart ? 'bg-orange-500 hover:bg-orange-600' : 'bg-green-600 hover:bg-green-700'} text-white rounded-lg sm:rounded-full px-3 py-1.5 sm:w-8 sm:h-8 flex items-center justify-center text-sm sm:text-xl font-bold shadow-xl focus:outline-none transition-colors duration-150`}
                                         onClick={() => {
                                             if (agotado) return;
                                             openAddToCartModal(producto);
@@ -895,6 +1395,15 @@ export default function CatalogoPage() {
                                         </span>
                                         <span className="hidden sm:inline">{agotado ? '×' : '+'}</span>
                                     </button>
+                                    {agotado && (
+                                        <>
+                                            <div className="pointer-events-none absolute inset-0 bg-gray-950/55" />
+                                            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 bg-gray-950/90 px-3 py-2 text-center">
+                                                <span className="text-sm font-black uppercase tracking-wide text-red-500 sm:text-base">Agotado</span>
+                                                <span className="text-xs leading-tight text-gray-100 sm:text-sm">No disponible</span>
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                             );
                         });
@@ -980,8 +1489,9 @@ export default function CatalogoPage() {
                                     v => String(v.variante_id ?? v.id) === String(addToCartModal.selectedVarianteId)
                                 );
                                 const maxCantidad = addToCartModal.variantes.length > 0
-                                    ? Math.max(0, Number(selectedVariante?.stock || 0))
+                                    ? getEffectiveVariantStock(selectedVariante)
                                     : Math.max(0, Number(addToCartModal.producto?.stock || 0));
+                                const unidadesDisponibles = getAvailableUnits(addToCartModal.producto, maxCantidad);
                                 return (
                                     <>
                                         {modalWarning && (
@@ -1003,20 +1513,37 @@ export default function CatalogoPage() {
                                             <p className="text-sm text-gray-500">Producto</p>
                                             <p className="font-semibold text-gray-900">{addToCartModal.producto.nombre}</p>
                                         </div>
+                                        {(() => {
+                                            if (maxCantidad <= 0) return null;
+                                            const conversionInfo = getConversionPriceInfo(addToCartModal.producto, maxCantidad);
+                                            if (!conversionInfo) return null;
+                                            return <UnitPricePanel conversionInfo={conversionInfo} factor={addToCartModal.producto.factor_conversion} className="mb-4" />;
+                                        })()}
+                                        {maxCantidad <= 0 && (
+                                            <span className="mb-4 inline-flex bg-red-100 text-red-700 text-xs font-bold px-2 py-1 rounded-md">
+                                                Agotado
+                                            </span>
+                                        )}
                                         {addToCartModal.variantes.length > 0 && (
                                             <div className="mb-4">
                                                 <label className="block text-sm font-medium text-gray-700 mb-1">Color</label>
                                                 <select
                                                     value={addToCartModal.selectedVarianteId ?? ''}
-                                                    onChange={(e) => setAddToCartModal(prev => ({
-                                                        ...prev,
-                                                        selectedVarianteId: e.target.value
-                                                    }))}
+                                                    onChange={(e) => setAddToCartModal(prev => {
+                                                        const nextVariante = prev.variantes.find(v => String(v.variante_id ?? v.id) === String(e.target.value));
+                                                        const nextStock = getEffectiveVariantStock(nextVariante);
+                                                        const nextUnits = getAvailableUnits(prev.producto, nextStock);
+                                                        return {
+                                                            ...prev,
+                                                            selectedVarianteId: e.target.value,
+                                                            unidad: nextUnits.includes(prev.unidad) ? prev.unidad : nextUnits[0]
+                                                        };
+                                                    })}
                                                     className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                                                 >
                                                     {addToCartModal.variantes.map((v, idx) => {
                                                         const optionValue = v.variante_id ?? v.id;
-                                                        const disponible = Number(v.stock || 0) > 0;
+                                                        const disponible = getEffectiveVariantStock(v) > 0;
                                                         return (
                                                             <option key={optionValue + '-' + idx} value={optionValue} disabled={!disponible}>
                                                                 {v.color || 'Sin color'}{disponible ? '' : ' - Agotado'}
@@ -1026,19 +1553,51 @@ export default function CatalogoPage() {
                                                 </select>
                                             </div>
                                         )}
+                                        {unidadesDisponibles.length > 1 && (
+                                            <div className="mb-4">
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Unidad</label>
+                                                <select
+                                                    value={addToCartModal.unidad ?? unidadesDisponibles[0]}
+                                                    onChange={(e) => setAddToCartModal(prev => ({
+                                                        ...prev,
+                                                        unidad: e.target.value,
+                                                        cantidad: prev.cantidad === '' ? '' : normalizeQuantityForUnit(prev.cantidad, e.target.value)
+                                                    }))}
+                                                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                                >
+                                                    {unidadesDisponibles.map((unidadDisponible) => (
+                                                        <option key={unidadDisponible} value={unidadDisponible}>
+                                                            {unidadDisponible}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        )}
                                         <div className="mb-6">
                                             <label className="block text-sm font-medium text-gray-700 mb-1">Cantidad</label>
+                                            {(() => {
+                                                const selectedUnit = addToCartModal.unidad ?? unidadesDisponibles[0] ?? addToCartModal.producto.unidad_base ?? 'unidad';
+                                                return (
                                             <input
                                                 type="number"
-                                                min={1}
+                                                min={getQuantityMinForUnit(selectedUnit)}
+                                                step={getQuantityStepForUnit(selectedUnit)}
                                                 disabled={maxCantidad <= 0}
                                                 value={addToCartModal.cantidad}
                                                 onChange={(e) => setAddToCartModal(prev => ({
                                                     ...prev,
-                                                    cantidad: Math.max(1, Number(e.target.value) || 1)
+                                                    cantidad: e.target.value
                                                 }))}
+                                                inputMode={isDiscreteUnit(selectedUnit) ? "numeric" : "decimal"}
                                                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                                             />
+                                                );
+                                            })()}
+                                            {unidadesDisponibles.length > 1 && (
+                                                <p className="mt-2 text-xs text-gray-500">
+                                                    1 {addToCartModal.producto.unidad_base || 'unidad'} = {Number(addToCartModal.producto.factor_conversion || 0) || 0} {(addToCartModal.producto.unidades_alternativas || [])[0] || 'unidad'}
+                                                </p>
+                                            )}
                                             {maxCantidad <= 0 && (
                                                 <p className="mt-2 text-sm text-red-600 font-semibold">Agotado</p>
                                             )}
@@ -1082,10 +1641,10 @@ export default function CatalogoPage() {
                                         });
                                         return Object.entries(counts).every(([vid, count]) => {
                                             const variante = p.variantes.find(vv => String(vv.variante_id ?? vv.id) === String(vid));
-                                            return variante && Number(variante.stock || 0) >= count;
+                                            return variante && getEffectiveVariantStock(variante) >= count;
                                         });
                                     } else if (p.variantes.length === 1) {
-                                        return Number(p.variantes[0].stock || 0) >= totalUnidades;
+                                        return getEffectiveVariantStock(p.variantes[0]) >= totalUnidades;
                                     } else {
                                         return Number(p.productos.stock || 0) >= totalUnidades;
                                     }
@@ -1133,7 +1692,7 @@ export default function CatalogoPage() {
                                                                     <option value="">Selecciona color para unidad #{unidadIdx + 1}</option>
                                                                     {p.variantes.map((v, vIdx) => {
                                                                         const optionValue = v.variante_id ?? v.id;
-                                                                        const disponible = Number(v.stock || 0) > 0;
+                                                                        const disponible = getEffectiveVariantStock(v) > 0;
                                                                         return (
                                                                             <option key={optionValue + '-' + vIdx} value={optionValue} disabled={!disponible}>
                                                                                 {v.color || 'Sin color'}{disponible ? '' : ' - Agotado'}
@@ -1302,23 +1861,23 @@ export default function CatalogoPage() {
                                                 <button
                                                     className="bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-full w-7 h-7 flex items-center justify-center font-bold text-lg"
                                                     title="Disminuir"
-                                                    onClick={() => updateCartQty(item.cart_key || getCartKey(item), Math.max(1, item.cantidad - 1))}
-                                                    disabled={item.cantidad <= 1}
+                                                    onClick={() => updateCartQty(item.cart_key || getCartKey(item), Math.max(0.01, getItemDisplayQuantity(item) - 1))}
+                                                    disabled={getItemDisplayQuantity(item) <= 1}
                                                 >
                                                     −
                                                 </button>
                                                 <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm font-semibold min-w-[2.5rem] text-center">
-                                                    x{item.cantidad}
+                                                    {getItemQuantityText(item)}
                                                 </span>
                                                 <button
                                                     className="bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-full w-7 h-7 flex items-center justify-center font-bold text-lg"
                                                     title="Aumentar"
-                                                    onClick={() => updateCartQty(item.cart_key || getCartKey(item), item.cantidad + 1)}
+                                                    onClick={() => updateCartQty(item.cart_key || getCartKey(item), getItemDisplayQuantity(item) + 1)}
                                                 >
                                                     +
                                                 </button>
                                                 <span className="font-bold text-green-600 ml-2">
-                                                    Bs {(item.precio * item.cantidad).toFixed(2)}
+                                                    Bs {getItemSubtotal(item).toFixed(2)}
                                                 </span>
                                                 <button
                                                     className="ml-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-full w-7 h-7 flex items-center justify-center font-bold text-lg"
@@ -1334,7 +1893,7 @@ export default function CatalogoPage() {
                             </ul>
                             <div className="flex justify-between items-center mb-3 pt-2 border-t-2 border-green-600 font-extrabold">
                                 <span className="text-lg text-green-800">Total:</span>
-                                <span className="text-2xl text-blue-800 bg-yellow-200 px-3 py-1 rounded-lg shadow">Bs {cart.reduce((sum, item) => sum + item.precio * item.cantidad, 0).toFixed(2)}</span>
+                                <span className="text-2xl text-blue-800 bg-yellow-200 px-3 py-1 rounded-lg shadow">Bs {cart.reduce((sum, item) => sum + getItemSubtotal(item), 0).toFixed(2)}</span>
                             </div>
                         </>
                     )}
@@ -1365,7 +1924,7 @@ export default function CatalogoPage() {
                                     </svg>
                                     Confirmar Pedido
                                 </h2>
-                                <button 
+                                <button
                                     onClick={() => setShowConfirmOrder(false)}
                                     className="text-white hover:text-red-200 text-3xl font-bold transition-colors"
                                 >
@@ -1405,8 +1964,8 @@ export default function CatalogoPage() {
                                             onChange={(e) => setCustomerData({...customerData, nombre: e.target.value})}
                                             placeholder="Ingresa tu nombre completo"
                                             className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                                                usuario && usuario.nombre 
-                                                    ? 'border-green-300 bg-green-50' 
+                                                usuario && usuario.nombre
+                                                    ? 'border-green-300 bg-green-50'
                                                     : 'border-gray-300'
                                             }`}
                                         />
@@ -1440,17 +1999,17 @@ export default function CatalogoPage() {
                                 <div className="bg-gray-50 rounded-lg p-4">
                                     <div className="space-y-3">
                                         {cart.map(item => (
-                                            <div key={item.user_id} className="flex justify-between items-center py-2 border-b border-gray-200 last:border-b-0">
+                                            <div key={item.cart_key || getCartKey(item)} className="flex justify-between items-center py-2 border-b border-gray-200 last:border-b-0">
                                                 <div className="flex-1">
                                                     <h4 className="font-semibold text-gray-800">{item.nombre}</h4>
                                                     <p className="text-sm text-gray-600">Bs {item.precio.toFixed(2)} c/u</p>
                                                 </div>
                                                 <div className="flex items-center gap-3">
                                                     <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm font-semibold">
-                                                        x{item.cantidad}
+                                                        {getItemQuantityText(item)}
                                                     </span>
                                                     <span className="font-bold text-green-600">
-                                                        Bs {(item.precio * item.cantidad).toFixed(2)}
+                                                        Bs {getItemSubtotal(item).toFixed(2)}
                                                     </span>
                                                 </div>
                                             </div>
@@ -1460,7 +2019,7 @@ export default function CatalogoPage() {
                                         <div className="flex justify-between items-center">
                                             <span className="text-xl font-bold text-gray-800">Total:</span>
                                             <span className="text-2xl font-bold text-green-600 bg-green-100 px-4 py-2 rounded-lg">
-                                                Bs {cart.reduce((sum, item) => sum + item.precio * item.cantidad, 0).toFixed(2)}
+                                                Bs {cart.reduce((sum, item) => sum + getItemSubtotal(item), 0).toFixed(2)}
                                             </span>
                                         </div>
                                     </div>
@@ -1475,7 +2034,7 @@ export default function CatalogoPage() {
                                     </svg>
                                     <div>
                                         <p className="text-sm text-blue-700">
-                                            <strong>¿Todo correcto?</strong> Revisa tu pedido antes de enviarlo. 
+                                            <strong>¿Todo correcto?</strong> Revisa tu pedido antes de enviarlo.
                                             Se abrirá WhatsApp para completar tu compra con nosotros.
                                         </p>
                                     </div>

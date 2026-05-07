@@ -14,7 +14,8 @@ import {
   YAxis,
 } from "recharts";
 import { Toast, showToast } from "../../../components/ui/Toast";
-import { getSupabaseClient } from "../../../lib/SupabaseClient";
+import { supabase } from "../../../lib/SupabaseClient";
+import { useSucursalActiva } from "../../../components/admin/SucursalContext";
 
 const PAYMENT_OPTIONS = [
   { value: "cash", label: "Efectivo" },
@@ -34,7 +35,8 @@ const PIE_COLORS = ["#16a34a", "#0284c7", "#7c3aed", "#f59e0b"];
 function isAutoSaleIncomeMovement(row) {
   if (!row || row.type !== "income") return false;
   const description = String(row.description || "").toLowerCase();
-  return description.includes("ingreso automatico por venta #");
+  // Detect any movement related to a sale (automatic or manual insert)
+  return description.includes("ingreso por venta #") || description.includes("ingreso automatico por venta #");
 }
 
 function normalizeSaleMethodForCashFlow(value) {
@@ -91,6 +93,7 @@ function monthRangeISO() {
 }
 
 export default function FlujoCajaPage() {
+  const { activeSucursalId } = useSucursalActiva();
   const [startDate, setStartDate] = useState(todayISO());
   const [endDate, setEndDate] = useState(todayISO());
   const [realCashInput, setRealCashInput] = useState("");
@@ -126,7 +129,6 @@ export default function FlujoCajaPage() {
   const [savingEdit, setSavingEdit] = useState(false);
 
   async function getSessionContext() {
-    const supabase = getSupabaseClient();
     const { data, error } = await supabase.auth.getSession();
     if (error || !data?.session?.user?.id || !data?.session?.access_token) {
       throw new Error("Sesion no valida. Inicia sesion para usar caja.");
@@ -145,7 +147,6 @@ export default function FlujoCajaPage() {
 
     if (resolvedProfileUserRef.current !== uid) {
       resolvedProfileUserRef.current = uid;
-      const supabase = getSupabaseClient();
       const { data: profileData } = await supabase
         .from("perfiles")
         .select("nombre")
@@ -180,6 +181,7 @@ export default function FlujoCajaPage() {
         end_date: endDate,
         cashbox_id: cashboxId || "main",
       });
+      if (activeSucursalId) params.set("sucursal_id", activeSucursalId);
 
       const res = await fetch(`/api/cash/summary?${params.toString()}`, {
         cache: "no-store",
@@ -210,6 +212,7 @@ export default function FlujoCajaPage() {
         cashbox_id: cashboxId || "main",
         limit: "25",
       });
+      if (activeSucursalId) params.set("sucursal_id", activeSucursalId);
 
       const res = await fetch(`/api/cash/closures?${params.toString()}`, {
         cache: "no-store",
@@ -242,6 +245,7 @@ export default function FlujoCajaPage() {
         cashbox_id: cashboxId || "main",
         limit: "200",
       });
+      if (activeSucursalId) params.set("sucursal_id", activeSucursalId);
 
       const res = await fetch(`/api/cash/movements?${params.toString()}`, {
         cache: "no-store",
@@ -265,17 +269,19 @@ export default function FlujoCajaPage() {
   }
 
   useEffect(() => {
+    if (!activeSucursalId) return;
     fetchSummary();
     fetchClosures();
     fetchMovements();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activeSucursalId]);
 
   useEffect(() => {
+    if (!activeSucursalId) return;
     fetchSummary();
     fetchMovements();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startDate, endDate, cashboxId]);
+  }, [startDate, endDate, cashboxId, activeSucursalId]);
 
   const difference = useMemo(() => {
     const expectedCash = Number(summary?.expected_cash || 0);
@@ -307,6 +313,7 @@ export default function FlujoCajaPage() {
     }));
   }, [summary]);
 
+  // Only show sales as auto sales rows, grouped by payment method
   const autoSalesRows = useMemo(() => {
     const rows = Array.isArray(summary?.auto_sales_rows) ? summary.auto_sales_rows : [];
     if (rows.length > 0) return rows;
@@ -317,19 +324,35 @@ export default function FlujoCajaPage() {
       date: sale.fecha,
       type: "income",
       payment_method: normalizeSaleMethodForCashFlow(sale.modo_pago),
-      description: `Ingreso por venta #${sale.id}`,
+      description: `Ingreso por venta #${sale.id}${sale.modo_pago ? ` (${sale.modo_pago})` : ""}`,
       amount: Number(sale.total || 0),
     }));
   }, [summary?.auto_sales_rows, summary?.sales]);
 
+  // Only show truly manual movements: exclude any that look like sales
   const manualMovements = useMemo(
-    () => movements.filter((movement) => !isAutoSaleIncomeMovement(movement)),
+    () => movements.filter((movement) => {
+      const desc = String(movement.description || "").toLowerCase();
+      if (desc.includes("ingreso por venta #") || desc.includes("ingreso automatico por venta #")) return false;
+      if (movement.source === "sale") return false;
+      return true;
+    }),
     [movements]
   );
 
   const autoSalesTotal = useMemo(
     () => Number(autoSalesRows.reduce((acc, row) => acc + Number(row.amount || 0), 0).toFixed(2)),
     [autoSalesRows]
+  );
+
+  const orphanSalesMovements = useMemo(
+    () => Array.isArray(summary?.orphan_sales_movements) ? summary.orphan_sales_movements : [],
+    [summary?.orphan_sales_movements]
+  );
+
+  const orphanSalesTotal = useMemo(
+    () => Number(orphanSalesMovements.reduce((acc, row) => acc + Number(row.amount || 0), 0).toFixed(2)),
+    [orphanSalesMovements]
   );
 
   const manualIncomeTotal = useMemo(
@@ -423,6 +446,7 @@ export default function FlujoCajaPage() {
           amount: movementAmount,
           description: movementDescription,
           cashbox_id: cashboxId || "main",
+          sucursal_id: activeSucursalId || null,
         }),
       });
 
@@ -459,6 +483,7 @@ export default function FlujoCajaPage() {
           real_cash: Number(realCashInput),
           real_qr: realQrInput === "" ? null : Number(realQrInput),
           cashbox_id: cashboxId || "main",
+          sucursal_id: activeSucursalId || null,
         }),
       });
 
@@ -541,6 +566,7 @@ export default function FlujoCajaPage() {
           payment_method: editFormData.payment_method,
           amount: editFormData.amount,
           description: editFormData.description,
+          sucursal_id: activeSucursalId || null,
         }),
       });
 
@@ -677,37 +703,54 @@ export default function FlujoCajaPage() {
           </div>
         </section>
 
-        <section className="grid grid-cols-1 gap-4 lg:grid-cols-7">
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
           <div className="rounded-2xl border border-emerald-200 bg-white p-5 shadow">
             <p className="text-xs font-bold uppercase tracking-wide text-emerald-600">Ingresos efectivo</p>
             <p className="mt-2 text-2xl font-black text-slate-900">{formatBs(summary?.income_by_method?.cash)}</p>
+            <p className="mt-1 text-xs text-slate-500">Solo del rango seleccionado</p>
           </div>
           <div className="rounded-2xl border border-blue-200 bg-white p-5 shadow">
             <p className="text-xs font-bold uppercase tracking-wide text-blue-600">Ingreso banco</p>
             <p className="mt-2 text-2xl font-black text-slate-900">{formatBs(summary?.income_bank)}</p>
-            <p className="mt-1 text-xs text-slate-500">QR + Tarjeta + Transferencia</p>
+            <p className="mt-1 text-xs text-slate-500">QR + Tarjeta + Transferencia del rango</p>
+          </div>
+          <div className="rounded-2xl border border-orange-200 bg-white p-5 shadow">
+            <p className="text-xs font-bold uppercase tracking-wide text-orange-600">Egreso efectivo</p>
+            <p className="mt-2 text-2xl font-black text-slate-900">{formatBs(summary?.expense_by_method?.cash)}</p>
+            <p className="mt-1 text-xs text-slate-500">Salidas en efectivo del rango</p>
           </div>
           <div className="rounded-2xl border border-red-200 bg-white p-5 shadow">
             <p className="text-xs font-bold uppercase tracking-wide text-red-600">Egreso banco</p>
             <p className="mt-2 text-2xl font-black text-slate-900">{formatBs(summary?.expense_bank)}</p>
-            <p className="mt-1 text-xs text-slate-500">QR + Tarjeta + Transferencia</p>
-          </div>
-          <div className="rounded-2xl border border-rose-200 bg-white p-5 shadow">
-            <p className="text-xs font-bold uppercase tracking-wide text-rose-600">Egresos totales</p>
-            <p className="mt-2 text-2xl font-black text-slate-900">{formatBs(summary?.totals?.expense)}</p>
-          </div>
-          <div className="rounded-2xl border border-sky-200 bg-white p-5 shadow">
-            <p className="text-xs font-bold uppercase tracking-wide text-sky-600">Saldo neto</p>
-            <p className="mt-2 text-2xl font-black text-slate-900">{formatBs(summary?.totals?.net)}</p>
+            <p className="mt-1 text-xs text-slate-500">QR + Tarjeta + Transferencia del rango</p>
           </div>
           <div className="rounded-2xl border border-indigo-200 bg-white p-5 shadow">
             <p className="text-xs font-bold uppercase tracking-wide text-indigo-600">Efectivo esperado</p>
             <p className="mt-2 text-2xl font-black text-slate-900">{formatBs(summary?.expected_cash)}</p>
+            <p className="mt-1 text-xs text-slate-500">Saldo acumulado hasta fecha fin</p>
           </div>
           <div className="rounded-2xl border border-fuchsia-200 bg-white p-5 shadow">
             <p className="text-xs font-bold uppercase tracking-wide text-fuchsia-700">Saldo banco esperado</p>
             <p className="mt-2 text-2xl font-black text-slate-900">{formatBs(summary?.expected_bank)}</p>
-            <p className="mt-1 text-xs text-slate-500">Apertura banco + neto banco</p>
+            <p className="mt-1 text-xs text-slate-500">Saldo acumulado hasta fecha fin</p>
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow">
+            <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">Total ingresos</p>
+            <p className="mt-2 text-2xl font-black text-slate-900">{formatBs(summary?.totals?.income)}</p>
+            <p className="mt-1 text-xs text-slate-600">Efectivo + banco + otros del rango</p>
+          </div>
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 shadow">
+            <p className="text-xs font-bold uppercase tracking-wide text-rose-700">Total egresos</p>
+            <p className="mt-2 text-2xl font-black text-slate-900">{formatBs(summary?.totals?.expense)}</p>
+            <p className="mt-1 text-xs text-slate-600">Efectivo + banco + otros del rango</p>
+          </div>
+          <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 shadow">
+            <p className="text-xs font-bold uppercase tracking-wide text-sky-700">Saldo neto del rango</p>
+            <p className="mt-2 text-2xl font-black text-slate-900">{formatBs(summary?.totals?.net)}</p>
+            <p className="mt-1 text-xs text-slate-600">Total ingresos - total egresos</p>
           </div>
         </section>
 
@@ -962,6 +1005,64 @@ export default function FlujoCajaPage() {
           )}
         </section>
 
+        {orphanSalesMovements.length > 0 && (
+          <section className="rounded-2xl border border-amber-300 bg-amber-50 p-5 shadow">
+            <h3 className="text-base font-extrabold text-amber-900">Residuos de ventas eliminadas</h3>
+            <p className="mt-1 text-sm font-semibold text-amber-800">
+              Estos movimientos quedaron en caja, pero la venta ya no existe. No suman al resumen actual; puedes eliminarlos para limpiar la auditoria.
+            </p>
+
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border border-amber-200 bg-white p-3 text-sm">
+                <p className="font-bold text-amber-700">Movimientos residuales</p>
+                <p className="text-xl font-black text-slate-900">{orphanSalesMovements.length}</p>
+              </div>
+              <div className="rounded-lg border border-amber-200 bg-white p-3 text-sm">
+                <p className="font-bold text-amber-700">Total que se estaba colando</p>
+                <p className="text-xl font-black text-slate-900">{formatBs(orphanSalesTotal)}</p>
+              </div>
+            </div>
+
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[820px] border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-amber-200 text-left text-amber-900">
+                    <th className="py-2">Fecha</th>
+                    <th className="py-2">Metodo</th>
+                    <th className="py-2">Descripcion</th>
+                    <th className="py-2 text-right">Monto</th>
+                    <th className="py-2 text-center">Accion</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orphanSalesMovements.map((movement) => {
+                    const methodLabel = PAYMENT_OPTIONS.find((opt) => opt.value === movement.payment_method)?.label || movement.payment_method || "-";
+                    const movementId = String(movement.id || "").replace(/^auto-/, "");
+                    return (
+                      <tr key={movement.id} className="border-b border-amber-100 text-slate-800">
+                        <td className="py-2">{movement.date ? new Date(movement.date).toLocaleString("es-BO") : "-"}</td>
+                        <td className="py-2">{methodLabel}</td>
+                        <td className="py-2">{movement.description || "-"}</td>
+                        <td className="py-2 text-right font-bold text-amber-800">+{formatBs(movement.amount)}</td>
+                        <td className="py-2 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteMovement(movementId)}
+                            disabled={deletingMovementId === movementId}
+                            className="rounded bg-red-700 px-3 py-1 text-xs font-black text-white hover:bg-red-800 disabled:opacity-50"
+                          >
+                            {deletingMovementId === movementId ? "Eliminando..." : "Eliminar residuo"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow">
           <h3 className="text-base font-extrabold text-slate-900">Movimientos registrados</h3>
           <p className="mt-1 text-sm text-slate-600">Aqui ves solo movimientos manuales (ingresos y egresos cargados desde caja).</p>
@@ -1003,6 +1104,8 @@ export default function FlujoCajaPage() {
                   {manualMovements.map((movement) => {
                     const isIncome = movement.type === "income";
                     const methodLabel = PAYMENT_OPTIONS.find((opt) => opt.value === movement.payment_method)?.label || movement.payment_method || "-";
+                    // Show 'Sistema' for sales (source === 'sale'), 'Manual' otherwise
+                    const sourceLabel = movement.source === "sale" ? "Sistema" : "Manual";
                     return (
                       <tr key={movement.id} className="border-b border-slate-100 text-slate-700">
                         <td className="py-2">{movement.date ? new Date(movement.date).toLocaleString("es-BO") : "-"}</td>
@@ -1010,7 +1113,9 @@ export default function FlujoCajaPage() {
                           {isIncome ? "Ingreso" : "Egreso"}
                         </td>
                         <td className="py-2">{methodLabel}</td>
-                        <td className="py-2" title={movement.user_id || "Sistema"}>{formatActor(movement.user_id)}</td>
+                        <td className="py-2" title={movement.user_id || "Sistema"}>
+                          {sourceLabel === "Manual" ? formatActor(movement.user_id) : sourceLabel}
+                        </td>
                         <td className="py-2">{movement.description || "-"}</td>
                         <td className={`py-2 text-right font-bold ${isIncome ? "text-emerald-700" : "text-rose-700"}`}>
                           {isIncome ? "+" : "-"}{formatBs(movement.amount)}

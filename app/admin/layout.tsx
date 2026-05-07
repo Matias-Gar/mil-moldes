@@ -2,11 +2,11 @@
 
 import Sidebar from './Sidebar';
 import { useState, useEffect } from 'react';
-import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../../lib/SupabaseClient';
 import { usePathname, useRouter } from 'next/navigation';
 import { Toast } from '../../components/ui/Toast';
 import { canAccessAdminPath, getDefaultAdminRoute, isAdminPanelRole } from '../../lib/adminPermissions';
+import { SucursalProvider } from '../../components/admin/SucursalContext';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -58,7 +58,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
     // Suscribirse a cambios de auth
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event: string, session: Session | null) => {
+      (event, session) => {
         if (!session) {
           router.push('/login');
         } else {
@@ -110,7 +110,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       </button>
       <Sidebar mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} userRole={userRole} />
       <main className="flex-1 bg-gray-100 p-6 overflow-y-auto">
-        {children}
+        <SucursalProvider showShell={userRole === 'admin'}>
+          {children}
+        </SucursalProvider>
       </main>
     </div>
   );

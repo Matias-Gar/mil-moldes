@@ -5,8 +5,13 @@
 
 import { createClient } from '@supabase/supabase-js';
 
+// Configura tus claves aquí (solo para uso local seguro)
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error('Faltan variables NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_ANON_KEY.');
+}
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 const NOMBRE_PRODUCTO = 'Gafas Lentes Vintage Oval Slim';

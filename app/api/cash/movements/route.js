@@ -16,6 +16,7 @@ export async function GET(request) {
       end_date: searchParams.get("end_date"),
       limit: searchParams.get("limit"),
       cashbox_id: searchParams.get("cashbox_id") || "main",
+      sucursal_id: searchParams.get("sucursal_id"),
     });
 
     return NextResponse.json({ success: true, data: movements });
@@ -92,7 +93,7 @@ export async function PATCH(request) {
     }
 
     const body = await request.json();
-    const { id, date, type, payment_method, amount, description } = body;
+    const { id, date, type, payment_method, amount, description, sucursal_id } = body;
 
     if (!id) {
       return NextResponse.json(
@@ -102,7 +103,7 @@ export async function PATCH(request) {
     }
 
     const supabase = getSupabaseServerClientFromRequest(request);
-    const { error } = await supabase
+    let query = supabase
       .from("cash_movements")
       .update({
         date: date || null,
@@ -112,6 +113,8 @@ export async function PATCH(request) {
         description: description || null,
       })
       .eq("id", id);
+    if (sucursal_id) query = query.eq("sucursal_id", sucursal_id);
+    const { error } = await query;
 
     if (error) {
       throw new Error(error.message || "Failed to update movement");

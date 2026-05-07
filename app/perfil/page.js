@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getSupabaseClient } from '../../lib/SupabaseClient';
+import { supabase } from '../../lib/SupabaseClient';
 import { useRouter } from 'next/navigation';
 import UserProfile from '../../components/UserProfile';
 import AuthDebug from '../../components/AuthDebug';
@@ -15,20 +15,24 @@ export default function ProfilePage() {
   useEffect(() => {
     async function checkUser() {
       try {
-        const supabase = getSupabaseClient();
         const { data: { user }, error } = await supabase.auth.getUser();
+
         if (error) throw error;
+
         if (!user) {
           router.push('/login');
           return;
         }
+
         setUser(user);
       } catch (error) {
+        // console.error('Error verificando usuario:', error);
         router.push('/login');
       } finally {
         setLoading(false);
       }
     }
+
     checkUser();
   }, [router]);
 
@@ -61,15 +65,14 @@ export default function ProfilePage() {
                 Mi Perfil
               </h1>
             </div>
-            
+
             <div className="flex items-center space-x-4">
               <span className="text-gray-600 text-sm">
                 {user.email}
               </span>
-              
+
               <button
                 onClick={async () => {
-                  const supabase = getSupabaseClient();
                   await supabase.auth.signOut();
                   router.push('/');
                 }}

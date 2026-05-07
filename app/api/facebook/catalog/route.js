@@ -1,5 +1,5 @@
 // 🔗 API para sincronizar productos con Facebook Catalog
-import { getSupabaseClient } from '@/lib/SupabaseClient';
+import { supabase } from '@/lib/SupabaseClient';
 import { FacebookCatalogAPI } from '@/lib/FacebookCatalogAPI';
 import { NextResponse } from 'next/server';
 
@@ -23,7 +23,6 @@ export async function POST(request) {
         // 📤 Sincronizar un producto específico
         const { producto_id } = body;
         
-        const supabase = getSupabaseClient();
         const { data: producto } = await supabase
           .from('productos')
           .select('*')

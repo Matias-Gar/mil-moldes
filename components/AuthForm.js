@@ -1,53 +1,110 @@
 "use client";
+
 import { useState } from 'react';
 import RecuperarContrasenaForm from './RecuperarContrasenaForm';
-import { getSupabaseClient } from "../lib/SupabaseClient";
+import { supabase } from "../lib/SupabaseClient";
 
 export default function AuthForm({ onLoginSuccess }) {
-  const supabase = getSupabaseClient();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [nombre, setNombre] = useState('');
+  const [telefono, setTelefono] = useState('');
+  const [nitCi, setNitCi] = useState('');
   const [loading, setLoading] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
-  const [message, setMessage] = useState(''); // Para mostrar mensajes de éxito/error
-  const [showForgotPassword, setShowForgotPassword] = useState(false); // Estado para mostrar el formulario de recuperación
+  const [message, setMessage] = useState('');
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+
+  const resetForm = () => {
+    setEmail('');
+    setPassword('');
+    setNombre('');
+    setTelefono('');
+    setNitCi('');
+  };
+
+  const toggleRegister = () => {
+    setIsRegistering((prev) => !prev);
+    setMessage('');
+    resetForm();
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setMessage('');
 
-    let data, error;
+    let data;
+    let error;
 
     if (isRegistering) {
-      // Lógica de REGISTRO (signUp)
-      ({ data, error } = await supabase.auth.signUp({ email, password }));
+      const cleanNombre = nombre.trim();
+      const cleanTelefono = telefono.trim();
+      const cleanNitCi = nitCi.trim();
+      const emailNorm = email.trim().toLowerCase();
+
+      if (!cleanNombre || !cleanTelefono || !cleanNitCi) {
+        setMessage("Error: Completa nombre, telefono y NIT/CI antes de registrarte.");
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/auth/check-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: emailNorm }),
+        });
+        const result = await response.json();
+
+        if (!response.ok) {
+          setMessage(`Error: ${result.error || "No se pudo validar el correo"}`);
+          setLoading(false);
+          return;
+        }
+
+        if (result.exists) {
+          setMessage("Error: Usted ya cuenta con una cuenta. Inicie sesion o recupere su contrasena.");
+          setLoading(false);
+          return;
+        }
+      } catch (_error) {
+        setMessage("Error: No se pudo validar si el correo ya esta registrado.");
+        setLoading(false);
+        return;
+      }
+
+      ({ data, error } = await supabase.auth.signUp({
+        email: emailNorm,
+        password,
+        options: {
+          data: {
+            nombre: cleanNombre,
+            telefono: cleanTelefono,
+            nit_ci: cleanNitCi,
+            rol: 'cliente',
+          },
+          emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}/login` : undefined,
+        },
+      }));
     } else {
-      // Lógica de INICIO DE SESIÓN (signInWithPassword)
       ({ data, error } = await supabase.auth.signInWithPassword({ email, password }));
     }
 
     if (error) {
-      // Manejo de errores de Supabase
-      // console.error(`Error de autenticación: ${error.message}`);
       setMessage(`Error: ${error.message}`);
-      
-    } else if (isRegistering && data.user && !data.session) {
-      // 💡 CORRECCIÓN: CASO 1 - REGISTRO EXITOSO, PERO REQUIERE CONFIRMACIÓN
-      // Muestra el mensaje de éxito, pero NO llama a onLoginSuccess (no hay sesión activa)
-      setMessage("¡Registro exitoso! Por favor, revisa tu correo para confirmar la cuenta.");
-      
-    } else if (data.session) {
-      // 💡 CASO 2 - INICIO DE SESIÓN EXITOSO o REGISTRO con autoconfirmación (si la tienes activa)
-      // Llama a la función de éxito que redirigirá por rol.
-      onLoginSuccess(data.session.user.id); 
-      
+    } else if (isRegistering) {
+      if (data?.session) {
+        await supabase.auth.signOut();
+      }
+      setMessage("Registro recibido. Revisa tu correo para confirmar la cuenta antes de iniciar sesion.");
+      resetForm();
+    } else if (data?.session) {
+      onLoginSuccess(data.session.user.id);
     } else {
-      // Manejo de otros casos raros (seguridad, etc.)
-      setMessage("Operación completada. Revisa tu estado de sesión o intenta de nuevo.");
+      setMessage("Operacion completada. Revisa tu estado de sesion o intenta de nuevo.");
     }
-    
-    // Limpiamos la contraseña y paramos la carga
+
     setPassword('');
     setLoading(false);
   };
@@ -58,7 +115,6 @@ export default function AuthForm({ onLoginSuccess }) {
         {isRegistering ? 'Crear Cuenta' : 'Acceso de Usuario'}
       </h2>
 
-      {/* Muestra el mensaje de error o éxito */}
       {message && (
         <div className={`p-3 mb-4 rounded-lg w-full text-center ${message.startsWith('Error') ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
           {message}
@@ -68,9 +124,46 @@ export default function AuthForm({ onLoginSuccess }) {
       {!showForgotPassword ? (
         <>
           <form onSubmit={handleSubmit} className="space-y-4 w-full">
+            {isRegistering && (
+              <>
+                <input
+                  type="text"
+                  placeholder="Nombre completo"
+                  value={nombre}
+                  onChange={(e) => {
+                    setNombre(e.target.value);
+                    setMessage("");
+                  }}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 placeholder-gray-500"
+                  required
+                />
+                <input
+                  type="tel"
+                  placeholder="Telefono"
+                  value={telefono}
+                  onChange={(e) => {
+                    setTelefono(e.target.value);
+                    setMessage("");
+                  }}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 placeholder-gray-500"
+                  required
+                />
+                <input
+                  type="text"
+                  placeholder="NIT/CI"
+                  value={nitCi}
+                  onChange={(e) => {
+                    setNitCi(e.target.value);
+                    setMessage("");
+                  }}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 placeholder-gray-500"
+                  required
+                />
+              </>
+            )}
             <input
               type="email"
-              placeholder="Correo electrónico"
+              placeholder="Correo electronico"
               value={email}
               onChange={(e) => {
                 setEmail(e.target.value);
@@ -81,7 +174,7 @@ export default function AuthForm({ onLoginSuccess }) {
             />
             <input
               type="password"
-              placeholder="Contraseña"
+              placeholder="Contrasena"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 placeholder-gray-500"
@@ -90,35 +183,29 @@ export default function AuthForm({ onLoginSuccess }) {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-lg hover:bg-indigo-700 transition duration-200 disabled:bg-gray-400"
+              className="w-full bg-indigo-600 !text-white font-semibold py-3 rounded-lg hover:bg-indigo-700 transition duration-200 disabled:bg-gray-400 disabled:!text-white"
             >
-              {loading ? 'Cargando...' : (isRegistering ? 'Registrarse' : 'Iniciar Sesión')}
+              {loading ? 'Cargando...' : (isRegistering ? 'Registrarse' : 'Iniciar Sesion')}
             </button>
           </form>
-          <button 
-            onClick={() => {
-                setIsRegistering(!isRegistering);
-                setMessage('');
-                setEmail('');
-                setPassword('');
-            }}
+          <button
+            type="button"
+            onClick={toggleRegister}
             className="mt-6 text-sm text-indigo-700 hover:text-indigo-900 font-medium transition duration-200"
           >
-            {isRegistering ? 'Ya tengo una cuenta' : '¿Necesitas una cuenta?'}
+            {isRegistering ? 'Ya tengo una cuenta' : 'Necesitas una cuenta?'}
           </button>
-          {/* Enlace Olvidé mi contraseña */}
           {!isRegistering && (
             <button
               type="button"
               onClick={() => {
                 setShowForgotPassword(true);
                 setMessage("");
-                setEmail("");
-                setPassword("");
+                resetForm();
               }}
               className="mt-2 text-xs text-indigo-600 hover:underline"
             >
-              ¿Olvidaste tu contraseña?
+              Olvidaste tu contrasena?
             </button>
           )}
         </>

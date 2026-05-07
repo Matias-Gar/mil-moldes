@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
-import { getSupabaseClient } from '../../../lib/SupabaseClient';
+import { supabase } from '../../../lib/SupabaseClient';
 import { optimizeImageForUpload } from '../../../lib/imageUploadOptimization';
 import { DEFAULT_STORE_SETTINGS, fetchStoreSettings, saveStoreSettings } from '../../../lib/storeSettings';
 
@@ -56,7 +56,6 @@ export default function StoreSettingsPage() {
       const extension = getFileExtension(preparedFile.name);
       const filePath = `store/logo-${crypto.randomUUID()}.${extension}`;
 
-      const supabase = getSupabaseClient();
       const { error: uploadError } = await supabase.storage
         .from(STORE_LOGO_BUCKET)
         .upload(filePath, preparedFile, {

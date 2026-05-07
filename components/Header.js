@@ -1,12 +1,13 @@
 "use client";
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { getSupabaseClient } from '../lib/SupabaseClient';
+import { usePathname } from 'next/navigation';
+import { supabase } from '../lib/SupabaseClient'; // Asegúrate que esta ruta es correcta
 import { DEFAULT_STORE_SETTINGS, fetchStoreSettings } from '../lib/storeSettings';
 import { getDefaultAdminRoute, isAdminPanelRole } from '../lib/adminPermissions';
 
 export default function Header() {
-  const supabase = getSupabaseClient();
+  const pathname = usePathname();
   const [session, setSession] = useState(null);
   const [userRole, setUserRole] = useState(null); // Nuevo estado para el rol
   const [storeSettings, setStoreSettings] = useState(DEFAULT_STORE_SETTINGS);
@@ -84,6 +85,9 @@ export default function Header() {
 
   const hasAdminPanelAccess = isAdminPanelRole(userRole);
   const adminPanelRoute = getDefaultAdminRoute(userRole);
+  const isInsumosView = pathname?.startsWith('/insumos');
+  const homeHref = isInsumosView ? '/insumos' : '/';
+  const pedidosHref = isInsumosView ? '/insumos/productos' : '/productos';
 
   return (
     <header className="bg-gray-800 p-2 sm:p-4 shadow-lg sticky top-0 z-10">
@@ -91,7 +95,7 @@ export default function Header() {
       <div className="block sm:hidden">
         {/* Fila superior: Título */}
         <div className="text-center mb-3">
-          <Link href="/">
+          <Link href={homeHref}>
             <div className="flex items-center justify-center gap-2 text-2xl font-extrabold text-white cursor-pointer hover:text-indigo-400 transition duration-200">
               {storeSettings.store_logo_url ? (
                 <img
@@ -111,7 +115,7 @@ export default function Header() {
           <div className="flex gap-2">
             {!session && (
               <>
-                <Link href="/productos">
+                <Link href={pedidosHref}>
                   <div className="bg-green-600 hover:bg-green-700 text-white font-bold px-3 py-2 rounded-lg text-sm transition duration-300 shadow-md">
                     🛒 Pedidos
                   </div>
@@ -131,7 +135,7 @@ export default function Header() {
                     Panel
                   </div>
                 </Link>
-                <Link href="/productos">
+                <Link href={pedidosHref}>
                   <div className="bg-green-500 hover:bg-green-600 text-white font-bold px-3 py-2 rounded-lg text-sm transition duration-300 shadow-md">
                     🛒 Pedidos
                   </div>
@@ -162,7 +166,7 @@ export default function Header() {
 
       {/* Layout desktop (sin cambios) */}
       <div className="hidden sm:flex sm:justify-between sm:items-center">
-        <Link href="/">
+        <Link href={homeHref}>
           <div className="flex items-center gap-3 text-3xl font-extrabold text-white cursor-pointer hover:text-indigo-400 transition duration-200">
             {storeSettings.store_logo_url ? (
               <img
@@ -182,7 +186,7 @@ export default function Header() {
                   Panel
                 </div>
               </Link>
-              <Link href="/productos">
+              <Link href={pedidosHref}>
                 <div className="bg-green-500 hover:bg-green-600 text-white font-bold px-4 py-2 rounded-lg text-base transition duration-300 shadow-md">
                   🛒 Pedidos
                 </div>
@@ -208,7 +212,7 @@ export default function Header() {
             </div>
           ) : (
             <>
-              <Link href="/productos">
+              <Link href={pedidosHref}>
                 <div className="bg-green-600 hover:bg-green-700 text-white font-bold px-4 py-2 rounded-lg text-base transition duration-300 shadow-md">
                   🛒 Pedidos
                 </div>

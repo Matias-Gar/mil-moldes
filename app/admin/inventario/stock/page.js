@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getSupabaseClient } from "../../../../lib/SupabaseClient";
+import { supabase } from "../../../../lib/SupabaseClient";
 import { CONFIG, whatsappUtils } from "../../../../lib/config";
 import { DEFAULT_STORE_SETTINGS, fetchStoreSettings } from "../../../../lib/storeSettings";
 import { Toast, showToast } from "../../../../components/ui/Toast";
+import { useSucursalActiva } from "../../../../components/admin/SucursalContext";
 
 export default function StockPage() {
+  const { activeSucursalId } = useSucursalActiva();
     // --- Mover funciones dependientes arriba para evitar ReferenceError ---
     const getStockMinimo = useCallback((prod) => {
       return Number(prod?.stock_minimo ?? CONFIG.INVENTARIO.STOCK_MINIMO_ALERTA ?? 3);
@@ -14,10 +16,7 @@ export default function StockPage() {
 
     // Calcular el stock como la suma de los stocks de las variantes si existen
     const getStockState = useCallback((prod) => {
-      let stock = Number(prod?.stock || 0);
-      if (prod?.variantes && Array.isArray(prod.variantes) && prod.variantes.length > 0) {
-        stock = prod.variantes.reduce((sum, v) => sum + (Number(v.stock) || 0), 0);
-      }
+      const stock = getBaseStock(prod);
       const stockMinimo = getStockMinimo(prod);
       if (stock <= 0) return "sin-stock";
       if (stock <= Math.min(stockMinimo, 2)) return "critico";
@@ -46,11 +45,11 @@ export default function StockPage() {
   useEffect(() => {
     fetchProductos();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orden, page]);
+  }, [orden, page, activeSucursalId]);
 
   useEffect(() => {
     fetchCategorias();
-  }, []);
+  }, [activeSucursalId]);
 
   useEffect(() => {
     let mounted = true;
@@ -77,8 +76,7 @@ export default function StockPage() {
     let error = null;
     let count = 0;
 
-    const supabase = getSupabaseClient();
-    const enrichedQuery = supabase.from("productos").select(`
+    let enrichedQuery = supabase.from("productos").select(`
       user_id,
       nombre,
       precio,
@@ -87,8 +85,12 @@ export default function StockPage() {
       imagen_url,
       category_id,
       codigo_barra,
+      unidad_base,
+      unidades_alternativas,
+      factor_conversion,
       categorias (categori)
     `, { count: "exact" });
+    if (activeSucursalId) enrichedQuery = enrichedQuery.eq("sucursal_id", activeSucursalId);
 
     const orderField = orden === "stock-desc" || orden === "stock-asc" ? "stock" : "user_id";
     const enrichedResult = await enrichedQuery
@@ -96,8 +98,7 @@ export default function StockPage() {
       .range(from, to);
 
     if (enrichedResult.error) {
-      const supabase = getSupabaseClient();
-      const fallbackQuery = supabase.from("productos").select(`
+      let fallbackQuery = supabase.from("productos").select(`
         user_id,
         nombre,
         precio,
@@ -105,8 +106,12 @@ export default function StockPage() {
         imagen_url,
         category_id,
         codigo_barra,
+        unidad_base,
+        unidades_alternativas,
+        factor_conversion,
         categorias (categori)
       `, { count: "exact" });
+      if (activeSucursalId) fallbackQuery = fallbackQuery.eq("sucursal_id", activeSucursalId);
 
       const orderField = orden === "stock-desc" || orden === "stock-asc" ? "stock" : "user_id";
       const fallbackResult = await fallbackQuery
@@ -150,19 +155,21 @@ export default function StockPage() {
     let data = null;
 
     // Traer todas las variantes activas, incluidas las de stock 0
-    const supabase = getSupabaseClient();
-    const withActive = await supabase
+    let withActiveQuery = supabase
       .from("producto_variantes")
-      .select("producto_id, color, stock, activo")
+      .select("producto_id, color, stock, stock_decimal, activo")
       .in("producto_id", ids)
       .eq("activo", true);
+    if (activeSucursalId) withActiveQuery = withActiveQuery.eq("sucursal_id", activeSucursalId);
+    const withActive = await withActiveQuery;
 
     if (withActive.error) {
-      const supabase = getSupabaseClient();
-      const fallback = await supabase
+      let fallbackQuery = supabase
         .from("producto_variantes")
-        .select("producto_id, color, stock, activo")
+        .select("producto_id, color, stock, stock_decimal, activo")
         .in("producto_id", ids);
+      if (activeSucursalId) fallbackQuery = fallbackQuery.eq("sucursal_id", activeSucursalId);
+      const fallback = await fallbackQuery;
 
       if (fallback.error) {
         console.error("Error al obtener variantes de productos:", fallback.error);
@@ -175,6 +182,10 @@ export default function StockPage() {
       data = withActive.data || [];
     }
 
+    const productById = Object.fromEntries(
+      (productosPage || []).map((prod) => [String(prod?.user_id ?? prod?.id ?? ""), prod])
+    );
+
     // Mostrar todas las variantes activas, aunque tengan stock 0
     const grouped = {};
     for (const variant of data) {
@@ -182,7 +193,7 @@ export default function StockPage() {
       if (!productoId) continue;
 
       const color = String(variant?.color || "").trim() || "Sin color";
-      const stock = Number(variant?.stock || 0);
+      const stock = getEffectiveVariantStock(variant);
 
       if (!grouped[productoId]) grouped[productoId] = {};
       if (!grouped[productoId][color]) grouped[productoId][color] = 0;
@@ -191,28 +202,170 @@ export default function StockPage() {
 
     const normalized = {};
     for (const [productoId, colorsMap] of Object.entries(grouped)) {
+      const prod = productById[productoId];
+      const conversionProductStock = hasUnitConversion(prod) ? Math.max(0, Number(prod?.stock || 0)) : null;
+      const entries = Object.entries(colorsMap);
       normalized[productoId] = Object.entries(colorsMap)
-        .map(([color, stock]) => ({ color, stock: Number(stock || 0) }))
+        .map(([color, stock]) => ({
+          color,
+          stock: conversionProductStock !== null && entries.length === 1
+            ? conversionProductStock
+            : Number(stock || 0)
+        }))
         // Ya no filtramos por stock > 0, mostramos todas
         .sort((a, b) => b.stock - a.stock || a.color.localeCompare(b.color, "es"));
     }
 
     setVariantesByProducto(normalized);
+    setProductos((prev) => prev.map((prod) => {
+      const pid = String(prod?.user_id ?? prod?.id ?? "");
+      const variantes = normalized[pid];
+      if (!Array.isArray(variantes) || variantes.length === 0) return prod;
+      const stockDecimal = variantes.reduce((sum, v) => sum + Number(v.stock || 0), 0);
+      const productStock = Math.max(0, Number(prod?.stock || 0));
+      return { ...prod, stock: hasUnitConversion(prod) ? productStock : (stockDecimal > 0 || productStock <= 0 ? stockDecimal : productStock) };
+    }));
   }
 
   function getColorStockDisplay(prod) {
     const pid = String(prod?.user_id ?? prod?.id ?? "");
     const variants = variantesByProducto[pid] || [];
     if (!Array.isArray(variants) || variants.length === 0) return "Sin variantes";
-    return variants.map((v) => `${v.color} (${v.stock})`).join(", ");
+    return variants.map((v) => `${v.color}: ${getReadableStockText(prod, v.stock)}`).join(", ");
+  }
+
+  function formatQuantity(value) {
+    const parsed = Number(value || 0);
+    if (!Number.isFinite(parsed)) return "0";
+    return Number(parsed.toFixed(2)).toString();
+  }
+
+  function getEffectiveVariantStock(variant) {
+    const decimal = Number(variant?.stock_decimal);
+    const legacy = Number(variant?.stock);
+    return Math.max(0, Number.isFinite(decimal) && decimal > 0 ? decimal : legacy || 0);
+  }
+
+  function getUnitInfo(prod) {
+    const unidadBase = String(prod?.unidad_base || "unidad").trim() || "unidad";
+    const alternativas = Array.isArray(prod?.unidades_alternativas)
+      ? prod.unidades_alternativas.map((u) => String(u || "").trim()).filter(Boolean)
+      : [];
+    const unidadAlternativa = alternativas.find((u) => u && u !== unidadBase);
+    const factor = Number(prod?.factor_conversion || 0);
+    return { unidadBase, unidadAlternativa, factor };
+  }
+
+  function hasUnitConversion(prod) {
+    const { unidadAlternativa, factor } = getUnitInfo(prod);
+    return Boolean(unidadAlternativa && Number.isFinite(factor) && factor > 0);
+  }
+
+  function getBaseStock(prod) {
+    const productStock = Math.max(0, Number(prod?.stock || 0));
+    if (hasUnitConversion(prod)) return productStock;
+    if (Array.isArray(prod?.variantes) && prod.variantes.length > 0) {
+      const variantStock = prod.variantes.reduce((sum, v) => sum + getEffectiveVariantStock(v), 0);
+      return variantStock > 0 || productStock <= 0 ? variantStock : productStock;
+    }
+    return productStock;
+  }
+
+  function getReadableStock(prod, stockInput = null) {
+    const stockBase = Math.max(0, Number(stockInput ?? getBaseStock(prod)) || 0);
+    const { unidadBase, unidadAlternativa, factor } = getUnitInfo(prod);
+
+    if (!unidadAlternativa || !Number.isFinite(factor) || factor <= 0) {
+      return {
+        hasConversion: false,
+        stockBase,
+        principal: `${formatQuantity(stockBase)} ${unidadBase}`,
+        detalle: "",
+        completos: Math.floor(stockBase),
+        restanteAlternativo: 0,
+        totalAlternativo: 0,
+        unidadBase,
+        unidadAlternativa,
+      };
+    }
+
+    const completos = Math.floor(stockBase + 0.000001);
+    const restanteAlternativo = Math.max(0, (stockBase - completos) * factor);
+    const totalAlternativo = stockBase * factor;
+    const detalle = completos > 0
+      ? `${formatQuantity(restanteAlternativo)} ${unidadAlternativa} sueltos`
+      : `Solo ${formatQuantity(totalAlternativo)} ${unidadAlternativa}`;
+
+    return {
+      hasConversion: true,
+      stockBase,
+      principal: `${completos} ${unidadBase}${completos === 1 ? "" : "s"} completo${completos === 1 ? "" : "s"}`,
+      detalle,
+      completos,
+      restanteAlternativo,
+      totalAlternativo,
+      unidadBase,
+      unidadAlternativa,
+    };
+  }
+
+  function getReadableStockText(prod, stockInput = null) {
+    const readable = getReadableStock(prod, stockInput);
+    if (!readable.hasConversion) return readable.principal;
+    if (readable.completos > 0 && readable.restanteAlternativo > 0) {
+      return `${readable.principal} + ${formatQuantity(readable.restanteAlternativo)} ${readable.unidadAlternativa}`;
+    }
+    if (readable.completos > 0) {
+      return `${readable.principal} (${formatQuantity(readable.totalAlternativo)} ${readable.unidadAlternativa})`;
+    }
+    return readable.detalle;
+  }
+
+  function StockHumanCard({ prod, compact = false }) {
+    const readable = getReadableStock(prod);
+    const state = getStockState(prod);
+    const canSellBase = !readable.hasConversion || readable.completos >= 1;
+    const canSellAlt = readable.hasConversion && readable.totalAlternativo > 0;
+
+    return (
+      <div className={`rounded-xl border bg-white text-left shadow-sm ${compact ? "p-3" : "p-4"}`}>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={"inline-flex items-center rounded-full px-3 py-1 text-xs font-bold " + getStockColor(prod)}>
+            {getStockLabel(prod)}
+          </span>
+          <span className="text-xs font-semibold text-slate-500">
+            Base: {formatQuantity(readable.stockBase)} {readable.unidadBase}
+          </span>
+        </div>
+        <div className="mt-2 text-base font-black text-slate-900">
+          {readable.principal}
+        </div>
+        {readable.detalle && (
+          <div className="mt-1 text-sm font-semibold text-sky-700">
+            {readable.detalle}
+          </div>
+        )}
+        {readable.hasConversion && (
+          <div className="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+            <div className={`rounded-lg px-3 py-2 font-semibold ${canSellBase ? "bg-green-50 text-green-800" : "bg-slate-100 text-slate-600"}`}>
+              {canSellBase ? `Se puede vender por ${readable.unidadBase}` : `No queda ${readable.unidadBase} completo`}
+            </div>
+            <div className={`rounded-lg px-3 py-2 font-semibold ${canSellAlt ? "bg-blue-50 text-blue-800" : "bg-slate-100 text-slate-600"}`}>
+              {canSellAlt ? `Disponible por ${readable.unidadAlternativa}` : `Sin ${readable.unidadAlternativa} disponible`}
+            </div>
+          </div>
+        )}
+      </div>
+    );
   }
 
   async function fetchCategorias() {
-    const supabase = getSupabaseClient();
-    const { data, error } = await supabase
+    let query = supabase
       .from("categorias")
       .select("categori")
       .order("categori", { ascending: true });
+    if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+    const { data, error } = await query;
 
     if (error) {
       console.error("Error al obtener categorías:", error);
@@ -223,7 +376,6 @@ export default function StockPage() {
   }
 
   async function sendWhatsappAlerta(prod) {
-    const supabase = getSupabaseClient();
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
       showToast("Debes iniciar sesión para enviar alertas", "error");
@@ -238,7 +390,7 @@ export default function StockPage() {
       return;
     }
 
-    const mensaje = `ALERTA DE STOCK BAJO\nProducto: ${prod.nombre}\nStock actual: ${prod.stock}\nStock mínimo: ${stockMinimo}`;
+    const mensaje = `ALERTA DE STOCK BAJO\nProducto: ${prod.nombre}\nStock actual: ${getReadableStockText(prod)}\nStock mínimo: ${stockMinimo}`;
     if (!window.__whatsapp_alertas) window.__whatsapp_alertas = {};
     const lastSentAt = window.__whatsapp_alertas[pid] || 0;
     if (Date.now() - lastSentAt < 60 * 1000) {
@@ -273,7 +425,7 @@ export default function StockPage() {
       || (stock === "low" && (state === "bajo" || state === "critico" || state === "sin-stock"))
       || (stock === "out" && state === "sin-stock")
       || (stock === "normal" && state === "normal")
-      || (stock === "high" && Number(prod?.stock || 0) >= highStockThreshold);
+      || (stock === "high" && getBaseStock(prod) >= highStockThreshold);
 
     return matchesSearch && matchesCategory && matchesStock;
   }, [search, categoryFilter, stockFilter, getStockState]);
@@ -282,8 +434,7 @@ export default function StockPage() {
     const orderField = orden === "stock-desc" || orden === "stock-asc" ? "stock" : "user_id";
     const ascending = orden === "asc" || orden === "stock-asc";
 
-    const supabase = getSupabaseClient();
-    const enrichedResult = await supabase.from("productos").select(`
+    let enrichedQuery = supabase.from("productos").select(`
       user_id,
       nombre,
       precio,
@@ -292,14 +443,19 @@ export default function StockPage() {
       imagen_url,
       category_id,
       codigo_barra,
+      unidad_base,
+      unidades_alternativas,
+      factor_conversion,
       categorias (categori)
-    `).order(orderField, { ascending });
+    `);
+    if (activeSucursalId) enrichedQuery = enrichedQuery.eq("sucursal_id", activeSucursalId);
+    const enrichedResult = await enrichedQuery.order(orderField, { ascending });
 
     if (!enrichedResult.error) {
-      return enrichedResult.data || [];
+      return await enrichProductosWithVariantStock(enrichedResult.data || []);
     }
 
-    const fallbackResult = await supabase.from("productos").select(`
+    let fallbackQuery = supabase.from("productos").select(`
       user_id,
       nombre,
       precio,
@@ -307,14 +463,47 @@ export default function StockPage() {
       imagen_url,
       category_id,
       codigo_barra,
+      unidad_base,
+      unidades_alternativas,
+      factor_conversion,
       categorias (categori)
-    `).order(orderField, { ascending });
+    `);
+    if (activeSucursalId) fallbackQuery = fallbackQuery.eq("sucursal_id", activeSucursalId);
+    const fallbackResult = await fallbackQuery.order(orderField, { ascending });
 
     if (fallbackResult.error) {
       throw fallbackResult.error;
     }
 
-    return fallbackResult.data || [];
+    return await enrichProductosWithVariantStock(fallbackResult.data || []);
+  }
+
+  async function enrichProductosWithVariantStock(items) {
+    const ids = (items || []).map((p) => p?.user_id ?? p?.id).filter(Boolean);
+    if (ids.length === 0) return items || [];
+
+    let query = supabase
+      .from("producto_variantes")
+      .select("producto_id, stock, stock_decimal")
+      .in("producto_id", ids);
+    if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+    const { data } = await query;
+
+    if (!Array.isArray(data) || data.length === 0) return items || [];
+
+    const totals = data.reduce((acc, row) => {
+      const key = String(row.producto_id);
+      acc[key] = (acc[key] || 0) + getEffectiveVariantStock(row);
+      return acc;
+    }, {});
+
+    return (items || []).map((prod) => {
+      const pid = String(prod?.user_id ?? prod?.id ?? "");
+      if (!(pid in totals)) return prod;
+      const productStock = Math.max(0, Number(prod?.stock || 0));
+      const variantStock = Math.max(0, Number(totals[pid] || 0));
+      return { ...prod, stock: hasUnitConversion(prod) ? productStock : (variantStock > 0 || productStock <= 0 ? variantStock : productStock) };
+    });
   }
 
   function openPrintWindow(title, bodyHtml) {
@@ -380,7 +569,7 @@ export default function StockPage() {
             <td>${prod.user_id ?? prod.id ?? "-"}</td>
             <td>${prod.nombre}</td>
             <td>${prod.codigo_barra || "-"}</td>
-            <td>${prod.stock ?? 0}</td>
+            <td>${getReadableStockText(prod)}</td>
             <td>Bs ${Number(prod.precio || 0).toFixed(2)}</td>
             <td>${getStockLabel(prod)}</td>
           </tr>
@@ -463,7 +652,7 @@ export default function StockPage() {
           <td>${prod.nombre}</td>
           <td>${getCategoryName(prod)}</td>
           <td>${prod.codigo_barra || "-"}</td>
-          <td>${prod.stock ?? 0}</td>
+          <td>${getReadableStockText(prod)}</td>
           <td>Bs ${Number(prod.precio || 0).toFixed(2)}</td>
           <td>${getStockLabel(prod)}</td>
         </tr>
@@ -527,7 +716,7 @@ export default function StockPage() {
 
       const resumen = lowStockProductos
         .slice(0, 25)
-        .map((prod) => `- ${prod.nombre}: ${prod.stock} u. (min ${getStockMinimo(prod)})`)
+        .map((prod) => `- ${prod.nombre}: ${getReadableStockText(prod)} (min ${getStockMinimo(prod)})`)
         .join("\n");
       const extra = lowStockProductos.length > 25 ? `\n...y ${lowStockProductos.length - 25} producto(s) más.` : "";
       const mensaje = `ALERTA GENERAL DE STOCK BAJO\n\nSe detectaron ${lowStockProductos.length} producto(s) con stock bajo.\n\n${resumen}${extra}`;
@@ -778,8 +967,8 @@ export default function StockPage() {
                     <th className="p-3 text-left">Nombre</th>
                     <th className="p-3 text-center">Precio</th>
                     <th className="p-3 text-center">Categoria</th>
-                    <th className="p-3 text-center">Stock</th>
-                    <th className="p-3 text-left">Colores (cantidad)</th>
+                    <th className="p-3 text-center">Stock claro</th>
+                    <th className="p-3 text-left">Detalle por color</th>
                     <th className="p-3 text-center">Estado</th>
                     <th className="p-3 text-center">Codigo</th>
                     <th className="p-3 text-center">Acciones</th>
@@ -796,12 +985,10 @@ export default function StockPage() {
                         <td className="p-3 font-semibold text-slate-900">{prod.nombre}</td>
                         <td className="p-3 text-center font-semibold text-indigo-600">Bs {Number(prod.precio).toFixed(2)}</td>
                         <td className="p-3 text-center text-slate-600">{categoryName}</td>
-                        <td className="p-3 text-center">
-                          <span className={"inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold " + getStockColor(prod)}>
-                            {prod.stock}
-                          </span>
+                        <td className="p-3 min-w-[260px]">
+                          <StockHumanCard prod={prod} compact />
                         </td>
-                        <td className="p-3 text-left text-xs text-slate-700 max-w-[320px] break-words">
+                        <td className="p-3 text-left text-xs font-medium text-slate-700 max-w-[360px] break-words">
                           {getColorStockDisplay(prod)}
                         </td>
                         <td className="p-3 text-center">
@@ -846,10 +1033,11 @@ export default function StockPage() {
                         </div>
                       </div>
 
+                      <div className="mt-3">
+                        <StockHumanCard prod={prod} compact />
+                      </div>
+
                       <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <span className={"inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold " + getStockColor(prod)}>
-                          Stock: {prod.stock}
-                        </span>
                         <span className="text-xs text-slate-500">{categoryName}</span>
                         <span className={"inline-flex items-center rounded-full px-2 py-1 text-[11px] font-bold " + getStockColor(prod)}>
                           {getStockLabel(prod)}

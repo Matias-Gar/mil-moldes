@@ -2,8 +2,9 @@
 
 import dynamic from 'next/dynamic';
 import { useEffect, useState, useRef } from 'react';
-import { getSupabaseClient } from "../../../../lib/SupabaseClient";
-import { useRouter } from "next/navigation";
+import Image from 'next/image';
+import { supabase } from "../../../../lib/SupabaseClient";
+import { usePathname, useRouter } from "next/navigation";
 import { v4 as uuidv4 } from 'uuid';
 import { getOptimizedImageUrl, buildImageSrcSet } from '../../../../lib/imageOptimization';
 import { optimizeImageForUpload } from '../../../../lib/imageUploadOptimization';
@@ -13,7 +14,12 @@ import { registrarHistorialProducto } from '../../../../lib/productosHistorial';
 import { canAccessAdminPath } from '../../../../lib/adminPermissions';
 
 import { sincronizarStockProducto } from '../../../../lib/utils';
+import { getProductViewMeta, normalizeProductView } from '../../../../lib/productViews';
+import { useSucursalActiva } from '../../../../components/admin/SucursalContext';
 
+
+// Importar CantidadConUnidadInput correctamente
+import CantidadConUnidadInput from '../../../../components/CantidadConUnidadInput';
 // Desactivar SSR para el componente de código de barras si usa librerías de cliente como 'react-barcode'
 // Si la tabla usa react-barcode, este dynamic es necesario. Si solo usa la función handlePrintBarcode, se podría quitar.
 // Lo mantendremos por si acaso el componente de tabla lo usa internamente.
@@ -27,7 +33,7 @@ const DEFAULT_COLOR_PALETTE = [
     'Gris Claro',
     'Gris Oscuro',
     'Plomo',
-    
+
     // Tonos de tierra
     'Beige',
     'Crema',
@@ -41,7 +47,7 @@ const DEFAULT_COLOR_PALETTE = [
     'Nude',
     'Camel',
     'Taupe',
-    
+
     // Rojos y derivados
     'Rojo',
     'Rojo Claro',
@@ -51,7 +57,7 @@ const DEFAULT_COLOR_PALETTE = [
     'Vino',
     'Marron Rojizo',
     'Oxido',
-    
+
     // Rosados y fucsia
     'Rosado',
     'Rosado Claro',
@@ -61,7 +67,7 @@ const DEFAULT_COLOR_PALETTE = [
     'Palo de Rosa',
     'Salmón',
     'Durazno',
-    
+
     // Corales y naranjas
     'Coral',
     'Coral Claro',
@@ -69,7 +75,7 @@ const DEFAULT_COLOR_PALETTE = [
     'Naranja Claro',
     'Naranja Oscuro',
     'Mandarina',
-    
+
     // Amarillos
     'Amarillo',
     'Amarillo Claro',
@@ -78,7 +84,7 @@ const DEFAULT_COLOR_PALETTE = [
     'Oro',
     'Dorado',
     'Lima',
-    
+
     // Verdes
     'Verde',
     'Verde Claro',
@@ -91,7 +97,7 @@ const DEFAULT_COLOR_PALETTE = [
     'Verde Agua',
     'Pistacho',
     'Esmeralda',
-    
+
     // Azules
     'Azul',
     'Azul Claro',
@@ -104,7 +110,7 @@ const DEFAULT_COLOR_PALETTE = [
     'Teal',
     'Petroleo',
     'Acero Azulado',
-    
+
     // Morados y violetas
     'Morado',
     'Morado Claro',
@@ -115,13 +121,13 @@ const DEFAULT_COLOR_PALETTE = [
     'Berenjena',
     'Purpura',
     'Ciruela',
-    
+
     // Metalizados
     'Plateado',
     'Plata',
     'Gris Metalizad',
     'Plomo Metalizad',
-    
+
     // Tonos especiales
     'Transparente',
     'Traslucido',
@@ -130,7 +136,7 @@ const DEFAULT_COLOR_PALETTE = [
     'Coppel',
     'Bronce',
     'Cobre',
-    
+
     // Combinaciones clasicas
     'Blanco con Negro',
     'Blanco con Dorado',
@@ -164,7 +170,7 @@ const DEFAULT_COLOR_PALETTE = [
     'Morado con Plata',
     'Turquesa con Blanco',
     'Emerald con Dorado',
-    
+
     // Especiales
     'Multicolor',
     'Animal Print',
@@ -278,16 +284,16 @@ function PrintVariantesModal({
     showQzStatus,
 }) {
     if (!isOpen || !product) return null;
-    
+
     const allSelected = variantes && variantes.length > 0 && variantes.every(v => selectedColors[v.id]);
     const anySelected = variantes && variantes.some(v => selectedColors[v.id]);
-    
+
     return (
         <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50">
             <div className="bg-white w-full max-w-md p-6 rounded-xl shadow-2xl">
                 <h3 className="text-xl font-bold mb-4 text-gray-800">Seleccionar Colores para Imprimir</h3>
                 <p className="text-sm text-gray-600 mb-4">Producto: <b>{product.nombre}</b></p>
-                
+
                 <div className="space-y-3 max-h-96 overflow-y-auto mb-6 border rounded-lg p-4 bg-gray-50">
                     {variantes && variantes.length > 0 ? (
                         variantes.map((v) => (
@@ -307,7 +313,7 @@ function PrintVariantesModal({
                         <p className="text-sm text-gray-500 text-center py-4">No hay colores disponibles</p>
                     )}
                 </div>
-                
+
                 <div className="flex justify-between mb-4">
                     <button
                         type="button"
@@ -362,7 +368,7 @@ function PrintVariantesModal({
                     </div>
                 </div>
                 )}
-                
+
                 <div className="flex justify-end space-x-4">
                     <button
                         type="button"
@@ -377,7 +383,7 @@ function PrintVariantesModal({
                         disabled={!anySelected}
                         className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed"
                     >
-                        🖨️ Imprimir Seleccionados
+                        Imprimir Seleccionados
                     </button>
                 </div>
             </div>
@@ -386,15 +392,15 @@ function PrintVariantesModal({
 }
 
 // --------------------------------------------------------------------------
-// COMPONENTE 2: Modal de Confirmación de Eliminación
+// COMPONENTE 2: Modal de Confirmacion de Eliminacion
 // --------------------------------------------------------------------------
 function DeleteConfirmationModal({ isOpen, onClose, onConfirm, productName }) {
     if (!isOpen) return null;
     return (
         <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50">
             <div className="bg-white w-full max-w-sm p-6 rounded-xl shadow-2xl">
-                <h3 className="text-xl font-bold mb-4 text-red-700">Confirmar Eliminación</h3>
-                <p className="text-gray-700 mb-6">¿Estás seguro de que quieres eliminar el producto <b>{productName}</b>? Esta acción no se puede deshacer.</p>
+                <h3 className="text-xl font-bold mb-4 text-red-700">Confirmar eliminacion</h3>
+                <p className="text-gray-700 mb-6">Estas seguro de que quieres eliminar el producto <b>{productName}</b>? Esta accion no se puede deshacer.</p>
                 <div className="flex justify-end space-x-4">
                     <button
                         type="button"
@@ -408,7 +414,7 @@ function DeleteConfirmationModal({ isOpen, onClose, onConfirm, productName }) {
                         onClick={onConfirm}
                         className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
                     >
-                        Sí, Eliminar
+                        S?, Eliminar
                     </button>
                 </div>
             </div>
@@ -416,9 +422,9 @@ function DeleteConfirmationModal({ isOpen, onClose, onConfirm, productName }) {
     );
 }
 
-// -------------------------------------------------------------------------- 
+// --------------------------------------------------------------------------
 // Lógica para subir la imagen a Supabase Storage (¡REVISAR RLS DE STORAGE!)
-// -------------------------------------------------------------------------- 
+// --------------------------------------------------------------------------
 const uploadProductImages = async (files) => {
     if (!files || files.length === 0) return [];
     const BUCKET_NAME = 'product_images';
@@ -438,7 +444,6 @@ const uploadProductImages = async (files) => {
         const fileName = `${uuidv4()}.${fileExtension}`;
         const filePath = `${userId}/${fileName}`;
 
-        const supabase = getSupabaseClient();
         const { error: uploadError } = await supabase.storage
             .from(BUCKET_NAME)
             .upload(filePath, preparedFile, {
@@ -461,13 +466,42 @@ const uploadProductImages = async (files) => {
     return Promise.all(uploadTasks);
 };
 
-// -------------------------------------------------------------------------- 
+function isMissingColumnError(error, columnName) {
+    return String(error?.message || '').toLowerCase().includes(String(columnName).toLowerCase());
+}
+
+function omitSucursalId(payload) {
+    const { sucursal_id, ...rest } = payload;
+    return rest;
+}
+
+async function insertWithOptionalSucursal(tableName, payloadOrPayloads, options = {}) {
+    const payloads = Array.isArray(payloadOrPayloads) ? payloadOrPayloads : [payloadOrPayloads];
+    const runInsert = (nextPayloads) => {
+        const query = supabase.from(tableName).insert(nextPayloads);
+        return options.select ? query.select() : query;
+    };
+
+    let result = await runInsert(payloads);
+
+    if (result.error && isMissingColumnError(result.error, 'sucursal_id')) {
+        result = await runInsert(payloads.map(omitSucursalId));
+    }
+
+    return result;
+}
+
+// --------------------------------------------------------------------------
 // COMPONENTE PRINCIPAL
-// -------------------------------------------------------------------------- 
-export default function AdminProductosPage() { 
+// --------------------------------------------------------------------------
+export default function AdminProductosPage() {
     // HOOKS AL INICIO
-    const router = useRouter(); 
-    const [userRole, setUserRole] = useState(null); 
+    const router = useRouter();
+    const pathname = usePathname();
+    const { activeSucursalId } = useSucursalActiva();
+    const currentProductView = normalizeProductView(pathname?.includes('/admin/insumos') ? 'insumos' : 'articulos');
+    const currentViewMeta = getProductViewMeta(currentProductView);
+    const [userRole, setUserRole] = useState(null);
     // Estado para el modal de colores repetidos
     const [showColorRepeatModal, setShowColorRepeatModal] = useState(false);
     // Estado para advertencia de nombre duplicado
@@ -475,10 +509,10 @@ export default function AdminProductosPage() {
     const [productos, setProductos] = useState([]);
     const [imagenesProductos, setImagenesProductos] = useState({});
     const [variantesProductos, setVariantesProductos] = useState({});
-    const newImageInputRef = useRef(null); 
-    const [showDeleteModal, setShowDeleteModal] = useState(false); 
-    const [productToDelete, setProductToDelete] = useState(null); 
-    const [categories, setCategories] = useState([]); 
+    const newImageInputRef = useRef(null);
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [productToDelete, setProductToDelete] = useState(null);
+    const [categories, setCategories] = useState([]);
     const [isImageModalOpen, setIsImageModalOpen] = useState(false);
     const [selectedImageIndex, setSelectedImageIndex] = useState(0);
     const [selectedImageList, setSelectedImageList] = useState([]);
@@ -486,26 +520,56 @@ export default function AdminProductosPage() {
     const [filterText, setFilterText] = useState('');
     const [filterLatest, setFilterLatest] = useState(true);
     const [categoryFilter, setCategoryFilter] = useState('all');
-    
-    const [newProduct, setNewProduct] = useState({ 
-        nombre: '', 
-        descripcion: '', 
-        precio: '', 
+
+    const [newProduct, setNewProduct] = useState({
+        nombre: '',
+        descripcion: '',
+        precio: '',
         precio_compra: '',
         category_id: '',
-        codigo_barra: ''
-    }); 
+        codigo_barra: '',
+        vista_producto: currentProductView,
+        unidad_base: 'unidad', // Ej: 'rollo', 'litro', 'unidad'
+        unidades_alternativas: [], // Ej: ['metro', 'ml', 'unidad']
+        factor_conversion: 1 // Ej: 50 (1 rollo = 50 metros)
+    });
+        // Opciones de unidades típicas
+        const unidadOptions = [
+            'unidad', 'rollo', 'metro', 'litro', 'ml', 'kg', 'g', 'paquete', 'caja', 'par', 'docena', 'pieza', 'bulto', 'galón', 'cm', 'mm', 'm', 'l', 'cl', 'botella', 'frasco', 'tableta', 'otro'
+        ];
+        const conversionSuggestionsByBase = {
+            rollo: ['metro', 'cm', 'mm'],
+            metro: ['cm', 'mm', 'rollo'],
+            m: ['cm', 'mm'],
+            litro: ['ml', 'cl', 'galÒ³n', 'botella', 'frasco'],
+            l: ['ml', 'cl', 'botella', 'frasco'],
+            ml: ['litro', 'cl', 'frasco'],
+            cl: ['ml', 'litro'],
+            kg: ['g'],
+            g: ['kg'],
+            caja: ['unidad', 'paquete', 'pieza'],
+            paquete: ['unidad', 'pieza'],
+            docena: ['unidad'],
+            par: ['unidad'],
+            botella: ['ml', 'litro'],
+            frasco: ['ml', 'litro'],
+            bulto: ['paquete', 'unidad'],
+            unidad: ['caja', 'paquete', 'par', 'docena'],
+        };
+        const smartAlternativeOptions = (conversionSuggestionsByBase[newProduct.unidad_base] || [])
+            .filter((u, idx, arr) => u !== newProduct.unidad_base && arr.indexOf(u) === idx);
+
     const [newVariants, setNewVariants] = useState(() => [
         createVariantDraft([], { color: '' })
     ]);
-    const [editingProduct, setEditingProduct] = useState(null); 
-    const [editImageFiles, setEditImageFiles] = useState([]); 
+    const [editingProduct, setEditingProduct] = useState(null);
+    const [editImageFiles, setEditImageFiles] = useState([]);
     const [editImageList, setEditImageList] = useState([]); // URLs actuales
     const [imageFiles, setImageFiles] = useState([]); // Para alta
-    const [loading, setLoading] = useState(false); 
-    const [message, setMessage] = useState(''); 
-    const [isDeleting, setIsDeleting] = useState(false); 
-    
+    const [loading, setLoading] = useState(false);
+    const [message, setMessage] = useState('');
+    const [isDeleting, setIsDeleting] = useState(false);
+
     // Estados para el modal de impresión de variantes
     const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
     const [productToPrint, setProductToPrint] = useState(null);
@@ -530,10 +594,14 @@ export default function AdminProductosPage() {
 
     const getColorSuggestions = (value = '') => {
         const query = normalizeText(value);
-        if (!query) return colorOptions.slice(0, 8);
+        const cleanOptions = colorOptions
+            .map(displayColorValue)
+            .filter((color) => color && !/^[?�]/.test(color))
+            .filter((color, index, arr) => arr.indexOf(color) === index);
+        if (!query) return cleanOptions.slice(0, 8);
 
-        const startsWith = colorOptions.filter((c) => normalizeText(c).startsWith(query));
-        const includes = colorOptions.filter(
+        const startsWith = cleanOptions.filter((c) => normalizeText(c).startsWith(query));
+        const includes = cleanOptions.filter(
             (c) => !startsWith.includes(c) && normalizeText(c).includes(query)
         );
         return [...startsWith, ...includes].slice(0, 8);
@@ -542,6 +610,12 @@ export default function AdminProductosPage() {
     const selectColorSuggestion = (rowIndex, colorValue) => {
         handleVariantChange(rowIndex, 'color', colorValue);
         setActiveColorRow(null);
+    };
+
+    const displayColorValue = (value = '') => {
+        const text = String(value || '');
+        if (/^[?�]+nico$/i.test(text)) return 'Unico';
+        return text.replace(/Ãšnico|Ãºnico/g, 'Unico');
     };
 
     const colorOptions = Array.from(
@@ -553,7 +627,9 @@ export default function AdminProductosPage() {
                     .flat()
                     .map((v) => String(v?.color || '').trim())
                     .filter(Boolean),
-            ].map((c) => c.trim())
+            ].map(displayColorValue)
+                .map((c) => c.trim())
+                .filter((c) => c && !/^[?�]/.test(c))
                 .filter(Boolean)
         )
     ).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
@@ -561,7 +637,6 @@ export default function AdminProductosPage() {
     useEffect(() => {
         async function loadPromociones() {
             try {
-                const supabase = getSupabaseClient();
                 const { data, error } = await supabase.from("promociones").select("*");
                 if (!error && Array.isArray(data)) setPromociones(data);
                 else if (error) console.warn("Error cargando promociones:", error);
@@ -775,7 +850,7 @@ export default function AdminProductosPage() {
                 : false;
 
             if (qzPrinted) {
-                setMessage('✅ Etiquetas enviadas por QZ Tray con corte por cada copia.');
+                setMessage('Etiquetas enviadas por QZ Tray con corte por cada copia.');
                 return;
             }
 
@@ -899,7 +974,7 @@ export default function AdminProductosPage() {
                 : false;
 
             if (qzHtmlPrinted) {
-                setMessage('✅ Etiquetas impresas por QZ Tray con corte por cada etiqueta.');
+                setMessage('Etiquetas impresas por QZ Tray con corte por cada etiqueta.');
                 return;
             }
 
@@ -970,7 +1045,7 @@ export default function AdminProductosPage() {
       const handlePrintVariantBarcode = async (event) => {
             const { codigoBarras, nombre, copies, printMode } = event.detail;
         if (!codigoBarras) return;
-        
+
         // Usar la función existente handlePrintBarcode
                         await handlePrintBarcodeRef.current(codigoBarras, nombre, copies, printMode || 'qz-html');
       };
@@ -1030,7 +1105,7 @@ export default function AdminProductosPage() {
       const selectedVariantes = variantes.filter(v => selectedColorsToPrint[v.id]);
 
             if (selectedVariantes.length === 0) {
-                setMessage('⚠️ Selecciona al menos un color para imprimir.');
+                setMessage('Selecciona al menos un color para imprimir.');
                 return;
             }
 
@@ -1055,7 +1130,6 @@ export default function AdminProductosPage() {
     // useEffect de autenticación y rol
     useEffect(() => {
         const checkAuthAndRole = async () => {
-            const supabase = getSupabaseClient();
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) {
                 router.push('/login');
@@ -1084,7 +1158,7 @@ export default function AdminProductosPage() {
     }, [router]);
 
     // --- FUNCIONES ---
-    
+
     const nextImage = () => {
         setSelectedImageIndex((prev) => (prev + 1) % selectedImageList.length);
     };
@@ -1100,15 +1174,38 @@ export default function AdminProductosPage() {
         setIsImageModalOpen(true);
     };
 
-    const handleNewProductChange = (e) => { 
+    const handleNewProductChange = (e) => {
         const { name, value } = e.target;
         if (name === 'category_id' && value === 'create') {
             try { sessionStorage.setItem('pendingProduct', JSON.stringify(newProduct)); } catch {};
             router.push('/admin/categorias?return=productos_nuevo');
             return;
         }
-        setNewProduct({ ...newProduct, [name]: value }); 
-    }; 
+        if (name === 'unidad_base') {
+            const allowedAlternatives = conversionSuggestionsByBase[value] || [];
+            setNewProduct((prev) => {
+                if (value === 'unidad') {
+                    return {
+                        ...prev,
+                        unidad_base: value,
+                        unidades_alternativas: [],
+                        factor_conversion: ''
+                    };
+                }
+                const alternativasActuales = Array.isArray(prev.unidades_alternativas)
+                    ? prev.unidades_alternativas.filter((u) => allowedAlternatives.includes(u))
+                    : [];
+                return {
+                    ...prev,
+                    unidad_base: value,
+                    unidades_alternativas: alternativasActuales,
+                    factor_conversion: alternativasActuales.length > 0 ? prev.factor_conversion : ''
+                };
+            });
+            return;
+        }
+        setNewProduct({ ...newProduct, [name]: value });
+    };
 
     const handleVariantChange = (index, field, value) => {
         setNewVariants(prev => prev.map((v, i) => {
@@ -1133,10 +1230,10 @@ export default function AdminProductosPage() {
             return prev.filter((_, i) => i !== index);
         });
     };
-    
-    const handleEditProductChange = (e) => { 
-        setEditingProduct({ ...editingProduct, [e.target.name]: e.target.value }); 
-    }; 
+
+    const handleEditProductChange = (e) => {
+        setEditingProduct({ ...editingProduct, [e.target.name]: e.target.value });
+    };
 
     const handleImageChange = (e) => {
         const files = Array.from(e.target.files);
@@ -1152,12 +1249,12 @@ export default function AdminProductosPage() {
         setEditImageList(editImageList.filter(img => img !== url));
     };
 
-    const closeEditModal = () => { 
-        setEditingProduct(null); 
-        setEditImageFiles([]); 
-        setEditImageList([]); 
-        setMessage(''); 
-    }; 
+    const closeEditModal = () => {
+        setEditingProduct(null);
+        setEditImageFiles([]);
+        setEditImageList([]);
+        setMessage('');
+    };
 
     const openEditModal = (producto) => {
         setEditingProduct(producto);
@@ -1165,21 +1262,22 @@ export default function AdminProductosPage() {
         setEditImageList(imagenesProductos[producto.user_id] || []);
         setMessage('');
     };
-    
-    // -------------------------------------------------------------------------- 
-    // FUNCIONES DE SUPABASE 
-    // -------------------------------------------------------------------------- 
 
-    // Función para cargar categorías 
+    // --------------------------------------------------------------------------
+    // FUNCIONES DE SUPABASE
+    // --------------------------------------------------------------------------
+
+    // Función para cargar categorías
     const fetchCategories = async () => {
-        const supabase = getSupabaseClient();
-        const { data, error } = await supabase
+        let query = supabase
             .from('categorias')
             .select('id, categori')
             .order('categori', { ascending: true });
+        if (activeSucursalId) query = query.eq('sucursal_id', activeSucursalId);
+        const { data, error } = await query;
         if (error) {
             setCategories([]);
-            setMessage('❌ Error al cargar categorías.');
+            setMessage('Error al cargar categorias.');
             return;
         }
         setCategories(data || []);
@@ -1191,9 +1289,9 @@ export default function AdminProductosPage() {
             return;
         }
         setLoading(true);
-        // 1. Traer productos
-        const supabase = getSupabaseClient();
-        const { data, error } = await supabase
+        let data = null;
+        let error = null;
+        let query = supabase
             .from('productos')
             .select(`
                 user_id,
@@ -1204,20 +1302,51 @@ export default function AdminProductosPage() {
                 stock,
                 imagen_url,
                 category_id,
+                vista_producto,
                 codigo_barra,
                 created_at,
                 categorias (categori)
             `)
             .order('created_at', { ascending: false });
+        if (activeSucursalId) query = query.eq('sucursal_id', activeSucursalId);
+        let response = await query;
+
+        data = response.data;
+        error = response.error;
+
+        if (error && String(error.message || '').includes('vista_producto')) {
+            let fallbackQuery = supabase
+                .from('productos')
+                .select(`
+                    user_id,
+                    nombre,
+                    descripcion,
+                    precio,
+                    precio_compra,
+                    stock,
+                    imagen_url,
+                    category_id,
+                    codigo_barra,
+                    created_at,
+                    categorias (categori)
+                `)
+                .order('created_at', { ascending: false });
+            if (activeSucursalId) fallbackQuery = fallbackQuery.eq('sucursal_id', activeSucursalId);
+            response = await fallbackQuery;
+
+            data = response.data;
+            error = response.error;
+        }
 
         if (error) {
-            setMessage(`❌ Error al cargar productos: ${error.message || JSON.stringify(error)}.`);
+            setMessage(`Error al cargar productos: ${error.message || JSON.stringify(error)}.`);
             console.error("Error en fetchProductos:", error);
             setLoading(false);
             return;
         }
-        const formattedData = data.map(p => ({
+        const formattedData = (data || []).map(p => ({
             ...p,
+            vista_producto: normalizeProductView(p.vista_producto),
             category_name: p.categorias ? p.categorias.categori : 'Sin Categoría'
         }));
         setProductos(formattedData);
@@ -1225,11 +1354,12 @@ export default function AdminProductosPage() {
         // 2. Traer imágenes de todos los productos
         const ids = formattedData.map(p => p.user_id);
         if (ids.length > 0) {
-            const supabase = getSupabaseClient();
-            const { data: imgs, error: imgsError } = await supabase
+            let imagesQuery = supabase
                 .from('producto_imagenes')
                 .select('producto_id, imagen_url')
                 .in('producto_id', ids);
+            if (activeSucursalId) imagesQuery = imagesQuery.eq('sucursal_id', activeSucursalId);
+            const { data: imgs, error: imgsError } = await imagesQuery;
             if (!imgsError && imgs) {
                 // Agrupar por producto_id y filtrar URLs vacías/nulas/incorrectas
                 const agrupadas = {};
@@ -1246,11 +1376,13 @@ export default function AdminProductosPage() {
                 setImagenesProductos(agrupadas);
             }
 
-            const { data: varsData, error: varsError } = await supabase
+            let variantsQuery = supabase
                 .from('producto_variantes')
                 .select('id, producto_id, color, stock, precio, sku, activo')
                 .in('producto_id', ids)
                 .order('color', { ascending: true });
+            if (activeSucursalId) variantsQuery = variantsQuery.eq('sucursal_id', activeSucursalId);
+            const { data: varsData, error: varsError } = await variantsQuery;
             if (!varsError && Array.isArray(varsData)) {
                 const grouped = {};
                 varsData.forEach(v => {
@@ -1273,9 +1405,8 @@ export default function AdminProductosPage() {
             fetchCategories();
             fetchProductos();
         }
-        
+
         // Listener de tiempo real
-        const supabase = getSupabaseClient();
         const channel = supabase
             .channel('productos-channel')
             .on(
@@ -1287,10 +1418,9 @@ export default function AdminProductosPage() {
             )
             .subscribe();
         return () => {
-            const supabase = getSupabaseClient();
             supabase.removeChannel(channel);
         };
-    }, [userRole]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [userRole, currentProductView, activeSucursalId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // load saved form if returning from otra página
     const restoredRef = useRef(false);
@@ -1298,13 +1428,18 @@ export default function AdminProductosPage() {
         try {
             const saved = sessionStorage.getItem('pendingProduct');
             if (saved) {
-                setNewProduct(JSON.parse(saved));
+                const parsed = JSON.parse(saved);
+                setNewProduct((prev) => ({
+                    ...prev,
+                    ...parsed,
+                    vista_producto: normalizeProductView(parsed?.vista_producto || prev.vista_producto || currentProductView),
+                }));
             }
         } catch (e) {
             console.warn('no se pudo restaurar producto pendiente', e);
         }
         restoredRef.current = true;
-    }, []);
+    }, [currentProductView]);
 
     // store form in sessionStorage whenever cambia, but skip initial render
     useEffect(() => {
@@ -1328,32 +1463,33 @@ export default function AdminProductosPage() {
             ? `Te falta ${missing[0]}`
             : `Te faltan ${missing.join(' y ')}`;
 
-        return window.confirm(`⚠️ ${detail}. ¿Estás seguro de ${actionLabel} sin estos datos?`);
+        return window.confirm(`${detail}. Estas seguro de ${actionLabel} sin estos datos?`);
     };
 
-    
-    // Función para Añadir Producto
-    const handleAñadirProducto = async (e) => {
+
+    // Funcion para anadir producto
+    const handleAnadirProducto = async (e) => {
         e.preventDefault();
         setMessage("");
 
         const canContinue = confirmMissingProductData({
             descripcion: newProduct?.descripcion,
             imageCount: imageFiles?.length || 0,
-            actionLabel: "añadir el producto",
+            actionLabel: "anadir el producto",
         });
         if (!canContinue) {
-            setMessage("ℹ️ Operación cancelada. Completa descripción o fotos si deseas.");
+            setMessage("Operacion cancelada. Completa descripcion o fotos si deseas.");
             return;
         }
 
         setLoading(true);
         // Validar nombre duplicado antes de guardar
-        const supabase = getSupabaseClient();
-        const { data: productosConNombre, error: errorNombre } = await supabase
+        let duplicateQuery = supabase
             .from("productos")
             .select("user_id")
             .ilike("nombre", newProduct.nombre.trim());
+        if (activeSucursalId) duplicateQuery = duplicateQuery.eq('sucursal_id', activeSucursalId);
+        const { data: productosConNombre, error: errorNombre } = await duplicateQuery;
         if (!errorNombre && productosConNombre && productosConNombre.length > 0) {
             setShowNameRepeatModal(true);
             setLoading(false);
@@ -1362,21 +1498,6 @@ export default function AdminProductosPage() {
 
         let imagenUrls = [];
         try {
-            // Modal de advertencia de nombre duplicado
-            if (showNameRepeatModal) {
-                return (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-                        <div className="bg-white rounded-xl shadow-lg p-8 max-w-sm w-full text-center">
-                            <h2 className="text-xl font-bold mb-4 text-red-700">Nombre de producto repetido</h2>
-                            <p className="mb-6 text-gray-800">Ya existe un producto con el nombre "{newProduct.nombre}". Elige un nombre diferente antes de guardar.</p>
-                            <button
-                                className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition"
-                                onClick={() => setShowNameRepeatModal(false)}
-                            >Aceptar</button>
-                        </div>
-                    </div>
-                );
-            }
             // Subir imágenes ANTES de insertar en la tabla
             if (imageFiles && imageFiles.length > 0) {
                 imagenUrls = await uploadProductImages(imageFiles);
@@ -1392,7 +1513,7 @@ export default function AdminProductosPage() {
                         finalSku = generateVariantBarcode(usedVariantCodes);
                     }
                     usedVariantCodes.add(finalSku);
-                    const normalizedColor = String(v.color || '').trim() || 'Único';
+                    const normalizedColor = String(v.color || '').trim() || 'Unico';
                     return {
                     color: normalizedColor,
                     stock: parseInt(v.stock || 0) || 0,
@@ -1405,23 +1526,10 @@ export default function AdminProductosPage() {
             const normalizedColors = variantsPayload.map(v => v.color.toLowerCase());
             if (new Set(normalizedColors).size !== normalizedColors.length) {
                 setShowColorRepeatModal(true);
-                setMessage('⚠️ Hay colores repetidos en las variantes. Corrige antes de guardar.');
+                setMessage('Hay colores repetidos en las variantes. Corrige antes de guardar.');
                 setLoading(false);
                 return;
             }
-            {/* Modal de advertencia de colores repetidos */}
-            {showColorRepeatModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-                    <div className="bg-white rounded-xl shadow-lg p-8 max-w-sm w-full text-center">
-                        <h2 className="text-xl font-bold mb-4 text-red-700">Colores repetidos</h2>
-                        <p className="mb-6 text-gray-800">Parece que tienes dos o más colores repetidos en las variantes. Corrígelos antes de guardar el producto.</p>
-                        <button
-                            className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition"
-                            onClick={() => setShowColorRepeatModal(false)}
-                        >Aceptar</button>
-                    </div>
-                </div>
-            )}
 
             if (variantsPayload.length === 0) {
                 throw new Error('Debes agregar al menos una variante.');
@@ -1430,42 +1538,81 @@ export default function AdminProductosPage() {
             const stockTotal = variantsPayload.reduce((sum, v) => sum + (Number(v.stock) || 0), 0);
             const codigoBarra = String(newProduct.codigo_barra || '').trim() || null;
 
-            // Usamos .select() para obtener el producto insertado y su user_id
-            const supabase = getSupabaseClient();
-            const { data: productoInsertado, error: insertError } = await supabase
-                .from('productos')
-                .insert([
-                    {
-                        nombre: newProduct.nombre,
-                        descripcion: newProduct.descripcion,
-                        precio: parseFloat(newProduct.precio) || 0,
-                        precio_compra: parseFloat(newProduct.precio_compra) || 0,
-                        stock: stockTotal,
-                        category_id: categoryIdValue,
-                        codigo_barra: codigoBarra,
-                        imagen_url: null, // Siempre null al crear
-                        // Llenar created_at con la fecha actual (ISO)
-                        created_at: new Date().toISOString()
-                    }
-                ]).select();
+            const unidadBaseNormalizada = String(newProduct.unidad_base || 'unidad').trim() || 'unidad';
+            const unidadesAlternativasNormalizadas = Array.isArray(newProduct.unidades_alternativas)
+                ? newProduct.unidades_alternativas.map((u) => String(u || '').trim()).filter(Boolean)
+                : [];
+            const factorConversionNormalizado = Number(newProduct.factor_conversion) > 0 ? Number(newProduct.factor_conversion) : null;
+            const vistaProductoNormalizada = normalizeProductView(newProduct.vista_producto);
+
+            const baseInsertPayload = {
+                nombre: newProduct.nombre,
+                descripcion: newProduct.descripcion,
+                precio: parseFloat(newProduct.precio) || 0,
+                precio_compra: parseFloat(newProduct.precio_compra) || 0,
+                stock: stockTotal,
+                category_id: categoryIdValue,
+                codigo_barra: codigoBarra,
+                imagen_url: null,
+                sucursal_id: activeSucursalId || null,
+                created_at: new Date().toISOString()
+            };
+
+            const extendedInsertPayload = {
+                ...baseInsertPayload,
+                vista_producto: vistaProductoNormalizada,
+                unidad_base: unidadBaseNormalizada,
+                unidades_alternativas: unidadesAlternativasNormalizadas,
+                factor_conversion: factorConversionNormalizado,
+            };
+
+            let productoInsertado = null;
+            let insertError = null;
+
+            ({ data: productoInsertado, error: insertError } = await insertWithOptionalSucursal('productos', extendedInsertPayload, { select: true }));
 
             if (insertError) {
-                throw new Error(insertError.message);
+                const rawMessage = String(insertError.message || '');
+                const missingViewColumn = rawMessage.includes('vista_producto');
+                const missingUnitColumns =
+                    rawMessage.includes('factor_conversion') ||
+                    rawMessage.includes('unidad_base') ||
+                    rawMessage.includes('unidades_alternativas');
+
+                const needsViewColumn = vistaProductoNormalizada !== 'articulos';
+                const needsUnitColumns =
+                    unidadBaseNormalizada !== 'unidad' ||
+                    unidadesAlternativasNormalizadas.length > 0 ||
+                    Number(factorConversionNormalizado || 0) > 0;
+
+                if ((missingViewColumn && needsViewColumn) || (missingUnitColumns && needsUnitColumns)) {
+                    const missingScripts = [];
+                    if (missingUnitColumns) missingScripts.push('scripts/add_product_unit_columns.sql');
+                    if (missingViewColumn) missingScripts.push('scripts/add_product_view_column.sql');
+                    throw new Error(`Tu base de datos aun no tiene las columnas necesarias. Ejecuta ${missingScripts.join(' y ')} en Supabase y vuelve a intentar.`);
+                }
+
+                if (missingViewColumn || missingUnitColumns) {
+                    const fallbackPayload = { ...baseInsertPayload };
+                    ({ data: productoInsertado, error: insertError } = await insertWithOptionalSucursal('productos', fallbackPayload, { select: true }));
+                }
+            }
+
+            if (insertError) {
+                throw new Error(String(insertError.message || insertError));
             }
 
             const productoId = productoInsertado?.[0]?.id ?? productoInsertado?.[0]?.user_id;
 
             // Insertar las imágenes en la tabla producto_imagenes
             if (productoId && imagenUrls.length > 0) {
-                const imagesToInsert = imagenUrls.map(url => ({ producto_id: productoId, imagen_url: url }));
-                const supabase = getSupabaseClient();
-                const { error: imgInsertError } = await supabase.from('producto_imagenes').insert(imagesToInsert);
+                const imagesToInsert = imagenUrls.map(url => ({ producto_id: productoId, imagen_url: url, sucursal_id: activeSucursalId || null }));
+                const { error: imgInsertError } = await insertWithOptionalSucursal('producto_imagenes', imagesToInsert);
                 if (imgInsertError) {
                     // Si falla la inserción, intentar borrar las imágenes subidas al storage
                     for (const url of imagenUrls) {
                         try {
                             const path = url.split('/').slice(-2).join('/'); // public/uuid.jpg
-                            const supabase = getSupabaseClient();
                             await supabase.storage.from('product_images').remove([path]);
                         } catch {}
                     }
@@ -1480,14 +1627,16 @@ export default function AdminProductosPage() {
                     producto_id: productoId,
                     color: v.color,
                     stock: v.stock,
+                    stock_decimal: Number(v.stock) || 0,
                     stock_inicial: v.stock, // Guardar stock_inicial igual al stock al crear
+                    stock_inicial_decimal: Number(v.stock) || 0,
                     precio: v.precio,
                     sku: v.sku,
                     imagen_url: null,
+                    sucursal_id: activeSucursalId || null,
                     activo: v.activo
                 }));
-                const supabase = getSupabaseClient();
-                const { error: variantsError } = await supabase.from('producto_variantes').insert(finalVariants);
+                const { error: variantsError } = await insertWithOptionalSucursal('producto_variantes', finalVariants);
                 if (variantsError) {
                     throw new Error(`Error al insertar variantes: ${variantsError.message}`);
                 }
@@ -1498,13 +1647,11 @@ export default function AdminProductosPage() {
 
             // Registrar movimiento de creación en stock_movimientos y historial
                         try {
-                                const supabase = getSupabaseClient();
                                 const user = (await supabase.auth.getUser())?.data?.user;
                                 // Registrar un evento de stock_inicial por cada variante
                                 if (productoId && Array.isArray(variantsPayload)) {
                                     for (const v of variantsPayload) {
                                         // Buscar la variante insertada para obtener su id
-                                        const supabase = getSupabaseClient();
                                         const { data: varianteData } = await supabase
                                             .from('producto_variantes')
                                             .select('id')
@@ -1517,8 +1664,11 @@ export default function AdminProductosPage() {
                                             variante_id: varianteData?.id || null,
                                             tipo: 'stock_inicial',
                                             cantidad: v.stock,
+                                            unidad: unidadBaseNormalizada,
+                                            cantidad_base: v.stock,
                                             usuario_id: user?.id || null,
                                             usuario_email: user?.email || '',
+                                            sucursal_id: activeSucursalId || null,
                                             observaciones: `Stock inicial para variante ${v.color}`
                                         });
                                     }
@@ -1528,13 +1678,17 @@ export default function AdminProductosPage() {
                                     producto_id: productoId,
                                     tipo: 'creación',
                                     cantidad: stockTotal,
+                                    unidad: unidadBaseNormalizada,
+                                    cantidad_base: stockTotal,
                                     usuario_id: user?.id || null,
                                     usuario_email: user?.email || '',
+                                    sucursal_id: activeSucursalId || null,
                                     observaciones: 'Alta de producto desde panel'
                                 });
                                 await registrarHistorialProducto({
                                     producto_id: productoId,
                                     accion: "CREATE",
+                                    sucursal_id: activeSucursalId || null,
                                     datos_anteriores: null,
                                     datos_nuevos: {
                                         nombre: newProduct.nombre,
@@ -1548,11 +1702,11 @@ export default function AdminProductosPage() {
                                     usuario_email: user?.email || null
                                 });
                         } catch (err) {
-                                console.warn('No se pudo registrar movimiento/historial de creación:', err);
+                                console.warn('No se pudo registrar movimiento/historial de creacion:', err);
                         }
-            setMessage('✅ Producto creado con éxito!');
+            setMessage('Producto creado con exito!');
             // Limpieza reforzada de todos los campos y sessionStorage
-            setNewProduct({ nombre: '', descripcion: '', precio: '', precio_compra: '', category_id: '', codigo_barra: '' });
+            setNewProduct({ nombre: '', descripcion: '', precio: '', precio_compra: '', category_id: '', codigo_barra: '', vista_producto: currentProductView, unidad_base: 'unidad', unidades_alternativas: [], factor_conversion: 1 });
             setNewVariants([createVariantDraft([], { color: '' })]);
             setImageFiles([]);
             setTimeout(() => {
@@ -1563,19 +1717,19 @@ export default function AdminProductosPage() {
             }, 100);
             fetchProductos();
         } catch (e) {
-            console.error("Error crítico al crear producto:", e);
-            setMessage(`❌ Error crítico al crear: ${e.message}`);
+            console.error("Error critico al crear producto:", e);
+            setMessage(`Error critico al crear: ${e.message}`);
         } finally {
             setLoading(false);
         }
     };
-    
-    const handleDelete = async (producto) => { 
-        setProductToDelete(producto); 
-        setShowDeleteModal(true); 
-    }; 
 
-    const confirmDelete = async () => { 
+    const handleDelete = async (producto) => {
+        setProductToDelete(producto);
+        setShowDeleteModal(true);
+    };
+
+    const confirmDelete = async () => {
         if (!productToDelete) return;
 
         setShowDeleteModal(false);
@@ -1584,40 +1738,43 @@ export default function AdminProductosPage() {
 
         try {
             // 1. Eliminar movimientos de stock relacionados
-            const supabase = getSupabaseClient();
             const { error: movError } = await supabase
                 .from('stock_movimientos')
                 .delete()
-                .eq('producto_id', productToDelete.user_id);
+                .eq('producto_id', productToDelete.user_id)
+                .eq(activeSucursalId ? 'sucursal_id' : 'producto_id', activeSucursalId || productToDelete.user_id);
             if (movError) throw new Error('Error al eliminar movimientos de stock: ' + movError.message);
 
             // 2. Eliminar historial de producto relacionado
             const { error: histError } = await supabase
                 .from('productos_historial')
                 .delete()
-                .eq('producto_id', productToDelete.user_id);
+                .eq('producto_id', productToDelete.user_id)
+                .eq(activeSucursalId ? 'sucursal_id' : 'producto_id', activeSucursalId || productToDelete.user_id);
             if (histError) throw new Error('Error al eliminar historial: ' + histError.message);
 
-            // 3. Eliminar el producto (la eliminación en cascada debería manejar imágenes y variantes)
-            const { error } = await supabase
+            // 3. Eliminar el producto (la eliminacion en cascada deberia manejar imagenes y variantes)
+            let deleteProductQuery = supabase
                 .from('productos')
                 .delete()
                 .eq('user_id', productToDelete.user_id);
+            if (activeSucursalId) deleteProductQuery = deleteProductQuery.eq('sucursal_id', activeSucursalId);
+            const { error } = await deleteProductQuery;
 
             if (error) {
                 throw new Error(error.message);
             }
 
-            setMessage(`✅ Producto "${productToDelete.nombre}" eliminado con éxito.`);
+            setMessage(`Producto "${productToDelete.nombre}" eliminado con exito.`);
             fetchProductos();
         } catch (e) {
-            setMessage(`❌ Error al eliminar: ${e.message}`);
+            setMessage(`Error al eliminar: ${e.message}`);
         } finally {
             setIsDeleting(false);
             setProductToDelete(null);
         }
     };
-    
+
     const handleGuardarEdicion = async (e) => {
         e.preventDefault();
         if (!editingProduct) return;
@@ -1631,7 +1788,7 @@ export default function AdminProductosPage() {
             actionLabel: 'guardar los cambios',
         });
         if (!canContinue) {
-            setMessage('ℹ️ Operación cancelada. Completa descripción o fotos si deseas.');
+            setMessage('Operacion cancelada. Completa descripcion o fotos si deseas.');
             return;
         }
 
@@ -1642,11 +1799,10 @@ export default function AdminProductosPage() {
             if (editImageFiles && editImageFiles.length > 0) {
                 nuevasUrls = await uploadProductImages(editImageFiles);
             }
-            
+
             // 2. Actualizar producto (sin tocar imagen_url principal)
             const categoryIdValue = editingProduct.category_id ? parseInt(editingProduct.category_id) : null;
-            const supabase = getSupabaseClient();
-            const { error: updateError } = await supabase
+            let updateQuery = supabase
                 .from('productos')
                 .update({
                     nombre: editingProduct.nombre,
@@ -1655,10 +1811,13 @@ export default function AdminProductosPage() {
                     precio_compra: parseFloat(editingProduct.precio_compra) || 0,
                     stock: parseInt(editingProduct.stock) || 0,
                     category_id: categoryIdValue,
+                    vista_producto: normalizeProductView(editingProduct.vista_producto || currentProductView),
                     // Dejamos el codigo_barra para que no se re-genere si se guarda sin querer
                     codigo_barra: editingProduct.codigo_barra
                 })
                 .eq('user_id', editingProduct.user_id);
+            if (activeSucursalId) updateQuery = updateQuery.eq('sucursal_id', activeSucursalId);
+            const { error: updateError } = await updateQuery;
             if (updateError) {
                 throw new Error(updateError.message);
             }
@@ -1670,14 +1829,15 @@ export default function AdminProductosPage() {
 
             if (urlsAEliminar.length > 0) {
                 // Eliminamos las referencias de la tabla producto_imagenes
-                const supabase = getSupabaseClient();
-                const { error: deleteImgError } = await supabase.from('producto_imagenes')
+                let deleteImagesQuery = supabase.from('producto_imagenes')
                     .delete()
                     .in('imagen_url', urlsAEliminar)
                     .eq('producto_id', editingProduct.user_id);
-                
+                if (activeSucursalId) deleteImagesQuery = deleteImagesQuery.eq('sucursal_id', activeSucursalId);
+                const { error: deleteImgError } = await deleteImagesQuery;
+
                 if(deleteImgError) console.error("Error al eliminar referencias de imágenes:", deleteImgError.message);
-                
+
                 // NOTA: ELIMINAR del Storage es más complejo y no está implementado aquí,
                 // ya que requeriría el path exacto del archivo, no solo la URL pública.
                 // Esto es una mejora pendiente.
@@ -1688,25 +1848,24 @@ export default function AdminProductosPage() {
                 // Filtrar URLs vacías, nulas o inválidas antes de insertar
                 const validUrls = nuevasUrls.filter(url => typeof url === 'string' && url.trim().length > 0 && url.startsWith('http'));
                 if (validUrls.length > 0) {
-                    const imagesToInsert = validUrls.map(url => ({ producto_id: editingProduct.user_id, imagen_url: url }));
-                    const supabase = getSupabaseClient();
-                    const { error: imgInsertError } = await supabase.from('producto_imagenes').insert(imagesToInsert);
+                    const imagesToInsert = validUrls.map(url => ({ producto_id: editingProduct.user_id, imagen_url: url, sucursal_id: activeSucursalId || null }));
+                    const { error: imgInsertError } = await insertWithOptionalSucursal('producto_imagenes', imagesToInsert);
                     if (imgInsertError) {
                         throw new Error(imgInsertError.message);
                     }
                 }
             }
 
-            setMessage(`✅ Producto "${editingProduct.nombre}" actualizado con éxito.`);
+            setMessage(`Producto "${editingProduct.nombre}" actualizado con exito.`);
             closeEditModal();
             fetchProductos();
         } catch (e) {
-            setMessage(`❌ Error al actualizar: ${e.message}`);
+            setMessage(`Error al actualizar: ${e.message}`);
         } finally {
             setLoading(false);
         }
     };
-    
+
     // Si no es admin, no renderizar nada (o un mensaje de acceso denegado)
     if (userRole === 'not_logged') {
         return <div className="p-8 text-center text-xl text-gray-500">Redirigiendo a Login...</div>;
@@ -1793,7 +1952,7 @@ export default function AdminProductosPage() {
             <span style={{ fontWeight: 700, color: "#16a34a" }}>{formatPrice(finalPrice)}</span>
           </div>
           <div style={{ fontSize: 12, color: "#6b7280" }}>
-            {promo.tipo ? `Promoción: ${promo.tipo}` : "Promoción activa"} {valor ? ` • ${valor}` : ""}
+            {promo.tipo ? `Promoción: ${promo.tipo}` : "Promoción activa"} {valor ? ` ⬢ ${valor}` : ""}
           </div>
         </div>
       );
@@ -1802,74 +1961,143 @@ export default function AdminProductosPage() {
     // Retorno del JSX del componente
     return (
         <div className="p-4 sm:p-6 md:p-10 bg-gray-100 min-h-screen">
-            <h1 className="text-3xl font-extrabold mb-8 text-indigo-700">Panel de Administración de Productos</h1>
-            
-            {/* Sección de Mensajes (Éxito/Error) */} 
-            {message && ( 
-                <div className={`p-4 mb-6 rounded-lg font-medium shadow-md ${message.startsWith('❌') 
-                    ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}> 
-                    {message} 
-                </div> 
-            )} 
+            <h1 className="text-3xl font-extrabold mb-8 text-indigo-700">{currentViewMeta.adminTitle}</h1>
 
-            {/* 1. Formulario de Añadir Producto */} 
-            <div className="bg-white p-6 sm:p-8 rounded-xl shadow-lg mb-10 border-t-4 border-indigo-500"> 
-                <h2 className="text-2xl font-bold mb-6 text-gray-800 border-b pb-3">Añadir Nuevo Artículo</h2> 
-                <form onSubmit={handleAñadirProducto} className="space-y-6"> 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6"> 
-                        <input 
-                            type="text" 
-                            name="nombre" 
-                            placeholder="Nombre del Producto" 
-                            value={newProduct.nombre} 
-                            onChange={handleNewProductChange} 
-                            required 
-                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 placeholder-gray-700 font-semibold bg-white" 
-                        /> 
-                        <input 
-                            type="number" 
-                            name="precio_compra" 
-                            placeholder="Precio de Compra (Bs)" 
-                            value={newProduct.precio_compra} 
-                            onChange={handleNewProductChange} 
-                            required 
-                            step="0.01" 
-                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 placeholder-gray-700 font-semibold bg-white" 
-                        />
-                        <input 
-                            type="number" 
-                            name="precio" 
-                            placeholder="Precio de Venta (Bs)" 
-                            value={newProduct.precio} 
-                            onChange={handleNewProductChange} 
-                            required 
-                            step="0.01" 
-                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 placeholder-gray-700 font-semibold bg-white" 
-                        /> 
-                        <input
-                            type="number"
-                            value={(newVariants || []).reduce((sum, v) => sum + (parseInt(v.stock || 0) || 0), 0)}
-                            readOnly
-                            placeholder="Stock Total"
-                            className="w-full p-3 border border-gray-300 rounded-lg bg-gray-100 text-gray-900 font-semibold"
-                        />
-                        
-                        {/* Selección de Categoría */} 
-                        <select
-                            name="category_id"
-                            value={newProduct.category_id}
-                            onChange={handleNewProductChange}
-                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 bg-white text-gray-900"
-                        >
-                            <option value="">-- Seleccionar Categoría --</option>
-                            {categories && categories.length > 0 && categories.map(cat => (
-                                <option key={cat.id} value={cat.id}>{cat.categori}</option>
-                            ))}
-                            <option value="create" className="font-semibold text-blue-700">+ Agregar categoría</option>
-                        </select>
-                    </div> {/* cierre del grid principal */}
+            {/* Seccion de Mensajes (exito/Error) */}
+            {message && (
+                <div className={`p-4 mb-6 rounded-lg font-medium shadow-md ${message.startsWith('Error')
+                    ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                    {message}
+                </div>
+            )}
 
-                    <div className="border rounded-lg p-4 bg-gray-50 space-y-3">
+            {/* 1. Formulario de Anadir Producto */}
+            <div className="bg-white p-4 sm:p-5 rounded-xl shadow-lg mb-6 border-t-4 border-indigo-500">
+                <h2 className="text-2xl font-bold mb-4 text-gray-800 border-b pb-2">{currentViewMeta.createTitle}</h2>
+                <form onSubmit={handleAnadirProducto} className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <input
+                                        type="text"
+                                        name="nombre"
+                                        placeholder="Nombre del Producto"
+                                        value={newProduct.nombre}
+                                        onChange={handleNewProductChange}
+                                        required
+                                        className="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-900 placeholder-gray-700 focus:border-indigo-500 focus:ring-indigo-500"
+                                />
+                                <input
+                                        type="number"
+                                        name="precio_compra"
+                                        placeholder="Precio de Compra (Bs)"
+                                        value={newProduct.precio_compra}
+                                        onChange={handleNewProductChange}
+                                        required
+                                        step="0.01"
+                                        className="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-900 placeholder-gray-700 focus:border-indigo-500 focus:ring-indigo-500"
+                                />
+                                <input
+                                        type="number"
+                                        name="precio"
+                                        placeholder="Precio de Venta (Bs)"
+                                        value={newProduct.precio}
+                                        onChange={handleNewProductChange}
+                                        required
+                                        step="0.01"
+                                        className="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-900 placeholder-gray-700 focus:border-indigo-500 focus:ring-indigo-500"
+                                />
+                                {/* NUEVO: Unidad base */}
+                                <div>
+                                    <label className="mb-1 block text-sm font-semibold text-gray-700">Unidad base</label>
+                                    <select
+                                        name="unidad_base"
+                                        value={newProduct.unidad_base}
+                                        onChange={handleNewProductChange}
+                                        className="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-indigo-500 focus:ring-indigo-500"
+                                    >
+                                        {unidadOptions.map(u => (
+                                            <option key={u} value={u}>{u}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                {newProduct.unidad_base !== 'unidad' && (
+                                    <>
+                                        {/* NUEVO: Unidad alternativa */}
+                                        <div>
+                                            <label className="mb-1 block text-sm font-semibold text-gray-700">Unidad alternativa</label>
+                                            {smartAlternativeOptions.length > 0 ? (
+                                                <>
+                                                    <select
+                                                        name="unidad_alternativa_select"
+                                                        value={Array.isArray(newProduct.unidades_alternativas) ? (newProduct.unidades_alternativas[0] || '') : ''}
+                                                        onChange={(e) => setNewProduct((p) => ({
+                                                            ...p,
+                                                            unidades_alternativas: e.target.value ? [e.target.value] : [],
+                                                            factor_conversion: e.target.value ? p.factor_conversion : ''
+                                                        }))}
+                                                        className="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-indigo-500 focus:ring-indigo-500"
+                                                    >
+                                                        <option value="">-- Sin unidad alternativa --</option>
+                                                        {smartAlternativeOptions.map((unidadAlternativa) => (
+                                                            <option key={unidadAlternativa} value={unidadAlternativa}>
+                                                                {unidadAlternativa}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    <p className="mt-1 text-xs text-gray-600">
+                                                        Opciones compatibles para <span className="font-semibold">{newProduct.unidad_base}</span>.
+                                                    </p>
+                                                </>
+                                            ) : (
+                                                    <div className="rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2 text-sm text-gray-500">
+                                                    No hay conversiones sugeridas para esta unidad base.
+                                                </div>
+                                            )}
+                                        </div>
+                                        {/* NUEVO: Factor de conversión */}
+                                        <div>
+                                            <label className="mb-1 block text-sm font-semibold text-gray-700">
+                                                Factor de conversión (1 {newProduct.unidad_base} = ? {Array.isArray(newProduct.unidades_alternativas) && newProduct.unidades_alternativas.length > 0
+                                                    ? newProduct.unidades_alternativas[0]
+                                                    : 'unidad'})
+                                            </label>
+                                            <input
+                                                type="number"
+                                                name="factor_conversion"
+                                                value={newProduct.factor_conversion ?? ''}
+                                                min={0.0001}
+                                                step={0.0001}
+                                                onChange={e => setNewProduct(p => ({ ...p, factor_conversion: e.target.value === '' ? '' : parseFloat(e.target.value) }))}
+                                                placeholder="Ej: 50 (1 rollo = 50 metros)"
+                                                className="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-900 placeholder-gray-700 focus:border-indigo-500 focus:ring-indigo-500"
+                                            />
+                                        </div>
+                                    </>
+                                )}
+                                {/* Selección de Categoría */}
+                                <select
+                                        name="vista_producto"
+                                        value={newProduct.vista_producto}
+                                        onChange={handleNewProductChange}
+                                        className="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-indigo-500 focus:ring-indigo-500"
+                                >
+                                        <option value="articulos">Vista: Articulos</option>
+                                        <option value="insumos">Vista: Insumos</option>
+                                </select>
+                                <select
+                                        name="category_id"
+                                        value={newProduct.category_id}
+                                        onChange={handleNewProductChange}
+                                        className="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-indigo-500 focus:ring-indigo-500"
+                                >
+                                        <option value="">-- Seleccionar Categoría --</option>
+                                        {categories && categories.length > 0 && categories.map(cat => (
+                                                <option key={cat.id} value={cat.id}>{cat.categori}</option>
+                                        ))}
+                                        <option value="create" className="font-semibold text-blue-700">+ Agregar categoría</option>
+                                </select>
+                        </div> {/* cierre del grid principal */}
+
+                    <div className="relative overflow-visible rounded-lg bg-gray-50 p-3 space-y-2">
                         <div className="flex items-center justify-between">
                             <h3 className="font-bold text-gray-800">Colores disponibles</h3>
                             <button
@@ -1883,133 +2111,189 @@ export default function AdminProductosPage() {
                         {newVariants.length === 0 ? (
                             <div className="text-sm text-gray-500">Sin colores. Agrega al menos uno.</div>
                         ) : (
-                            <div className="space-y-2">
-                                <div className="text-xs text-gray-600 mb-2 grid grid-cols-1 md:grid-cols-7 gap-2 px-2">
+                            <div className="space-y-2 overflow-visible">
+                                <div className="grid grid-cols-[minmax(150px,1.35fr)_78px_140px_88px_108px_40px_40px] gap-1.5 px-1 text-xs font-semibold text-slate-700">
                                     <span>Color</span>
                                     <span>Stock</span>
                                     <span>Precio</span>
-                                    <span>Código auto</span>
-                                    <span>Activo</span>
+                                    <span>Unidad base</span>
+                                    <span>Conversion</span>
                                     <span></span>
                                     <span></span>
                                 </div>
                                 {newVariants.map((variant, idx) => (
-                                    <div key={`variant-${idx}`} className="grid grid-cols-1 md:grid-cols-7 gap-2 items-center">
-                                        <div className="relative">
-                                            <input
-                                                type="text"
-                                                value={variant.color}
-                                                onFocus={() => setActiveColorRow(idx)}
-                                                onBlur={() => setTimeout(() => setActiveColorRow((current) => (current === idx ? null : current)), 120)}
-                                                onChange={(e) => {
-                                                    handleVariantChange(idx, 'color', e.target.value);
-                                                    setActiveColorRow(idx);
-                                                }}
-                                                onKeyDown={(e) => {
-                                                    if (e.key === 'Escape') setActiveColorRow(null);
-                                                }}
-                                                placeholder="Color (ej: Rojo)"
-                                                autoComplete="off"
-                                                className="p-2 border border-gray-300 rounded bg-white text-gray-900 focus:ring-indigo-500 focus:border-indigo-500 text-sm w-full"
-                                            />
-                                            {activeColorRow === idx && getColorSuggestions(variant.color).length > 0 && (
-                                                <div className="absolute z-20 mt-1 w-full max-h-36 overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg">
-                                                    {getColorSuggestions(variant.color).map((color) => (
-                                                        <button
-                                                            key={`${idx}-${color}`}
-                                                            type="button"
-                                                            onMouseDown={(e) => {
-                                                                e.preventDefault();
-                                                                selectColorSuggestion(idx, color);
-                                                            }}
-                                                            className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-indigo-50"
-                                                        >
-                                                            {color}
-                                                        </button>
-                                                    ))}
+                                    <div
+                                        key={`variant-${idx}`}
+                                        className="grid grid-cols-[minmax(150px,1.35fr)_78px_140px_88px_108px_40px_40px] items-center gap-1.5"
+                                    >
+                                        <div className="contents">
+                                            <div className="relative">
+                                                <label className="hidden">Color</label>
+                                                <input
+                                                    type="text"
+                                                    value={displayColorValue(variant.color)}
+                                                    onFocus={() => setActiveColorRow(idx)}
+                                                    onBlur={() => setTimeout(() => setActiveColorRow((current) => (current === idx ? null : current)), 120)}
+                                                    onChange={(e) => {
+                                                        handleVariantChange(idx, 'color', e.target.value);
+                                                        setActiveColorRow(idx);
+                                                    }}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Escape') setActiveColorRow(null);
+                                                    }}
+                                                    placeholder="Color (ej: Rojo)"
+                                                    autoComplete="off"
+                                                    className="h-8 w-full rounded border border-gray-300 bg-white px-2 text-sm text-gray-900 focus:border-indigo-500 focus:ring-indigo-500"
+                                                />
+                                                {activeColorRow === idx && getColorSuggestions(variant.color).length > 0 && (
+                                                    <div className="absolute z-20 mt-1 w-full max-h-36 overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg">
+                                                        {getColorSuggestions(variant.color).map((color) => (
+                                                            <button
+                                                                key={`${idx}-${color}`}
+                                                                type="button"
+                                                                onMouseDown={(e) => {
+                                                                    e.preventDefault();
+                                                                    selectColorSuggestion(idx, color);
+                                                                }}
+                                                                className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-indigo-50"
+                                                            >
+                                                                {color}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div>
+                                                <label className="hidden">Stock</label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    value={variant.stock}
+                                                    onChange={e => handleVariantChange(idx, 'stock', e.target.value)}
+                                                    placeholder="Stock"
+                                                    className="h-8 w-full rounded border border-gray-300 bg-white px-2 text-sm text-gray-900 focus:border-indigo-500 focus:ring-indigo-500"
+                                                    required
+                                                />
+                                            </div>
+
+                                            <div className="hidden">
+                                                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-gray-500 xl:hidden">Unidad base</label>
+                                                <div className="flex min-h-[42px] items-center rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-semibold text-gray-700">
+                                                    {newProduct.unidad_base || 'Unidad'}
                                                 </div>
-                                            )}
+                                            </div>
+
+                                            <div className="hidden">
+                                                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-gray-500 xl:hidden">Unidad de conversion</label>
+                                                <div className="flex min-h-[42px] items-center rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm text-gray-700">
+                                                    {Array.isArray(newProduct.unidades_alternativas) && newProduct.unidades_alternativas.length > 0
+                                                        ? `${newProduct.unidades_alternativas[0]}${Number(newProduct.factor_conversion) > 0 ? ` · x${newProduct.factor_conversion}` : ''}`
+                                                        : 'Sin conversion'}
+                                                </div>
+                                            </div>
+
+                                            <div>
+                                                <label className="hidden">Precio</label>
+                                                <input
+                                                    type="number"
+                                                    step="0.01"
+                                                    min="0"
+                                                    value={variant.precio}
+                                                    onChange={(e) => handleVariantChange(idx, 'precio', e.target.value)}
+                                                    placeholder="Precio (opcional)"
+                                                    className="h-8 w-full rounded border border-gray-300 bg-white px-2 text-sm text-gray-900 focus:border-indigo-500 focus:ring-indigo-500"
+                                                />
+                                            </div>
+
+                                            <div className="flex h-8 items-center truncate rounded border border-gray-200 bg-gray-50 px-2 text-xs font-semibold text-gray-700">
+                                                {newProduct.unidad_base || 'unidad'}
+                                            </div>
+
+                                            <div className="flex h-8 items-center truncate rounded border border-gray-200 bg-gray-50 px-2 text-xs text-gray-700">
+                                                {Array.isArray(newProduct.unidades_alternativas) && newProduct.unidades_alternativas.length > 0
+                                                    ? `${newProduct.unidades_alternativas[0]} x${newProduct.factor_conversion || 1}`
+                                                    : 'Sin conversion'}
+                                            </div>
+
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (variant.codigo_barra) {
+                                                                const event = new CustomEvent('printVariantBarcode', {
+                                                                    detail: {
+                                                                        codigoBarras: variant.codigo_barra,
+                                                                        nombre: `${newProduct.nombre || 'Producto'} (${variant.color})`,
+                                                                        copies: Math.max(1, Math.min(200, Number(variant.stock) || 1)),
+                                                                        printMode: 'qz-html',
+                                                                        etiquetas: true
+                                                                    }
+                                                                });
+                                                                window.dispatchEvent(event);
+                                                            }
+                                                        }}
+                                                        className="inline-flex h-8 w-8 items-center justify-center rounded bg-green-600 text-white shadow-sm transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                                        disabled={!variant.codigo_barra}
+                                                        title="Imprimir etiqueta"
+                                                    >
+                                                        <svg
+                                                            aria-hidden="true"
+                                                            viewBox="0 0 24 24"
+                                                            className="h-4 w-4"
+                                                            fill="none"
+                                                            stroke="currentColor"
+                                                            strokeWidth="2"
+                                                            strokeLinecap="round"
+                                                            strokeLinejoin="round"
+                                                        >
+                                                            <path d="M6 9V4h12v5" />
+                                                            <rect x="6" y="13" width="12" height="7" rx="1" />
+                                                            <path d="M6 14H4a2 2 0 0 1-2-2v-1a4 4 0 0 1 4-4h12a4 4 0 0 1 4 4v1a2 2 0 0 1-2 2h-2" />
+                                                            <path d="M9 17h6" />
+                                                        </svg>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => removeVariantRow(idx)}
+                                                        className="inline-flex h-8 w-8 items-center justify-center rounded bg-red-400 text-white shadow-sm transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                                        disabled={newVariants.length <= 1}
+                                                        title="Eliminar variante"
+                                                    >
+                                                        <svg
+                                                            aria-hidden="true"
+                                                            viewBox="0 0 24 24"
+                                                            className="h-4 w-4"
+                                                            fill="none"
+                                                            stroke="currentColor"
+                                                            strokeWidth="2"
+                                                            strokeLinecap="round"
+                                                            strokeLinejoin="round"
+                                                        >
+                                                            <path d="M3 6h18" />
+                                                            <path d="M8 6V4h8v2" />
+                                                            <path d="M19 6l-1 14H6L5 6" />
+                                                            <path d="M10 11v6" />
+                                                            <path d="M14 11v6" />
+                                                        </svg>
+                                                    </button>
                                         </div>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            value={variant.stock}
-                                            onChange={(e) => handleVariantChange(idx, 'stock', e.target.value)}
-                                            placeholder="Stock"
-                                            className="p-2 border border-gray-300 rounded bg-white text-gray-900 focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-                                            required
-                                        />
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            min="0"
-                                            value={variant.precio}
-                                            onChange={(e) => handleVariantChange(idx, 'precio', e.target.value)}
-                                            placeholder="Precio (opcional)"
-                                            className="p-2 border border-gray-300 rounded bg-white text-gray-900 focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-                                        />
-                                        <input
-                                            type="text"
-                                            value={variant.codigo_barra || variant.sku || ''}
-                                            readOnly
-                                            className="p-2 border border-gray-300 rounded bg-gray-100 text-gray-900 text-sm"
-                                            title="Código de variante generado automáticamente al agregar el color"
-                                        />
-                                        <label className="flex items-center gap-2 text-xs text-gray-700 px-1">
-                                            <input
-                                                type="checkbox"
-                                                checked={variant.activo !== false}
-                                                onChange={(e) => handleVariantChange(idx, 'activo', e.target.checked)}
-                                            />
-                                            Activo
-                                        </label>
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                              if (variant.codigo_barra) {
-                                                                                                const event = new CustomEvent('printVariantBarcode', {
-                                                                                                                                                                                                        detail: {
-                                                                                                                                                                                                                codigoBarras: variant.codigo_barra,
-                                                                                                                                                                                                                nombre: `${newProduct.nombre || 'Producto'} (${variant.color})`,
-                                                                                                                                                                                                            copies: Math.max(1, Math.min(200, Number(variant.stock) || 1)),
-                                                                                                                                                                                                            printMode: 'qz-html'
-                                                                                                                                                                                                        }
-                                                                                                });
-                                                window.dispatchEvent(event);
-                                              }
-                                            }}
-                                            className="bg-green-600 hover:bg-green-700 text-white px-2 py-1 text-xs rounded transition"
-                                            disabled={!variant.codigo_barra}
-                                            title="Imprimir código de barras"
-                                        >
-                                            🖨️
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => removeVariantRow(idx)}
-                                            className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-                                            disabled={newVariants.length <= 1}
-                                            title="Eliminar variante"
-                                        >
-                                            -
-                                        </button>
                                     </div>
                                 ))}
                             </div>
                         )}
                     </div>
-                    <textarea 
-                        name="descripcion" 
-                        placeholder="Descripción del Producto" 
-                        value={newProduct.descripcion} 
-                        onChange={handleNewProductChange} 
-                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 h-24 text-gray-900 placeholder-gray-700 font-semibold bg-white" 
-                    /> 
-                    
-                    {/* Campo de Subida de Imagen */} 
-                    <div className="flex flex-col">
+                    <textarea
+                        name="descripcion"
+                        placeholder="Descripción del Producto"
+                        value={newProduct.descripcion}
+                        onChange={handleNewProductChange}
+                        className="h-16 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-900 placeholder-gray-700 focus:border-indigo-500 focus:ring-indigo-500"
+                    />
+
+                    {/* Campo de Subida de Imagen */}
+                    <div className="flex flex-col gap-2">
                         <label className="text-gray-700 font-medium mb-2">Imágenes del Producto</label>
-                        <div className="flex items-center space-x-4">
+                        <div className="flex items-center gap-3">
                             <input
                                 type="file"
                                 accept="image/*"
@@ -2021,50 +2305,50 @@ export default function AdminProductosPage() {
                             />
                             <label
                                 htmlFor="new-product-image"
-                                className="px-4 py-2 bg-indigo-500 text-white rounded-lg shadow-md hover:bg-indigo-600 transition cursor-pointer"
+                                className="cursor-pointer rounded-lg bg-indigo-500 px-3 py-2 text-sm text-white shadow-md transition hover:bg-indigo-600"
                             >
                                 Seleccionar archivos
                             </label>
-                            <span className="text-gray-500">
+                            <span className="text-sm text-gray-500">
                                 {imageFiles && imageFiles.length > 0 ? `${imageFiles.length} archivo(s) seleccionado(s)` : 'Ningún archivo seleccionado'}
                             </span>
                         </div>
                     </div>
 
-                    <button 
-                        type="submit" 
-                        disabled={loading} 
-                        className={`w-full py-3 font-bold text-white rounded-lg transition ${ 
-                            loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 shadow-lg' 
-                        }`} 
-                    > 
-                        {loading ? 'Añadiendo...' : '🛒 Añadir Producto'} 
-                    </button> 
-                </form> 
-            </div> 
-            
-            {/* 2. Catálogo Actual (Tabla) */} 
-            <h2 className="text-2xl font-bold mb-6 text-gray-800 border-b pb-3">Catálogo Actual</h2>
+                    <button
+                        type="submit"
+                        disabled={loading}
+                        className={`w-full rounded-lg py-2.5 font-bold text-white transition ${
+                            loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 shadow-lg'
+                        }`}
+                    >
+                        {loading ? 'Anadiendo...' : 'Anadir Producto'}
+                    </button>
+                </form>
+            </div>
+
+            {/* 2. Catalogo Actual (Tabla) */}
+            <h2 className="text-2xl font-bold mb-6 text-gray-800 border-b pb-3">Catalogo Actual</h2>
 
             <div className="mb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div className="flex items-center gap-2">
-                <input 
-                  type="text" 
-                  placeholder="Buscar por nombre, código o categoría" 
-                  value={filterText} 
-                  onChange={(e) => setFilterText(e.target.value)} 
-                  className="p-2 border rounded-lg w-full md:w-80 focus:ring-indigo-500 focus:border-indigo-500" 
+                <input
+                  type="text"
+                  placeholder="Buscar por nombre, codigo o categoria"
+                  value={filterText}
+                  onChange={(e) => setFilterText(e.target.value)}
+                  className="p-2 border rounded-lg w-full md:w-80 focus:ring-indigo-500 focus:border-indigo-500"
                 />
-                <button 
-                  type="button" 
-                  onClick={() => setFilterText('')} 
+                <button
+                  type="button"
+                  onClick={() => setFilterText('')}
                   className="px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
                 >
                   Limpiar
                 </button>
               </div>
               <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-700">Categoría:</label>
+                <label className="text-sm font-medium text-gray-700">Categoria:</label>
                 <select
                   value={categoryFilter}
                   onChange={(e) => setCategoryFilter(e.target.value)}
@@ -2078,14 +2362,14 @@ export default function AdminProductosPage() {
               </div>
               <div className="flex items-center gap-2 text-sm text-gray-700">
                 <span>Orden:</span>
-                <button 
+                <button
                   className={`px-3 py-1 rounded-lg border ${filterLatest ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-white text-gray-700'}`}
                   type="button"
                   onClick={() => setFilterLatest(true)}
                 >
-                  Últimos ingresos
+                  Ultimos ingresos
                 </button>
-                <button 
+                <button
                   className={`px-3 py-1 rounded-lg border ${!filterLatest ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-white text-gray-700'}`}
                   type="button"
                   onClick={() => setFilterLatest(false)}
@@ -2095,9 +2379,9 @@ export default function AdminProductosPage() {
               </div>
             </div>
 
-            {loading && productos.length === 0 && <p className="text-center text-gray-600">Cargando catálogo...</p>} 
-            
-            {filteredProductos.length > 0 ? ( 
+            {loading && productos.length === 0 && <p className="text-center text-gray-600">Cargando catálogo...</p>}
+
+            {filteredProductos.length > 0 ? (
                 <div className="overflow-x-auto bg-white rounded-xl shadow-lg">
                     <table className="min-w-full divide-y divide-gray-200">
                         <thead className="bg-white">
@@ -2166,15 +2450,15 @@ export default function AdminProductosPage() {
                                                     onClick={() => {
                                                         const variantes = getPrintableVariantes(producto);
                                                         if (variantes.length === 0) {
-                                                            setMessage(`⚠️ El producto "${producto.nombre}" no tiene colores cargados para seleccionar.`);
+                                                            setMessage(`El producto "${producto.nombre}" no tiene colores cargados para seleccionar.`);
                                                             return;
                                                         }
                                                         openPrintVariantesModal(producto);
                                                     }}
                                                     className="mt-2 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition text-base font-semibold"
-                                                    title="Imprimir Código de Barra"
+                                                    title="Imprimir Codigo de Barra"
                                                 >
-                                                    🖨️ Imprimir
+                                                    Imprimir
                                                 </button>
                                             </div>
                                         </td>
@@ -2182,8 +2466,8 @@ export default function AdminProductosPage() {
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{safe(producto.category_name)}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">Bs {Number(producto.precio_compra || 0).toFixed(2)}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm">
-                                            <PrecioConPromocion 
-                                                producto={producto} 
+                                            <PrecioConPromocion
+                                                producto={producto}
                                                 promociones={promociones}
                                                 className=""
                                                 compact={true}
@@ -2228,7 +2512,7 @@ export default function AdminProductosPage() {
             ) : (
                 !loading && <p className="text-center text-gray-600">No hay productos en el catálogo.</p>
             )}
-            
+
             {/* Modal de Edición (Faltaba en tu código, lo agregué con la lógica base) */}
             {editingProduct && (
                 <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50 overflow-y-auto">
@@ -2243,6 +2527,15 @@ export default function AdminProductosPage() {
                                 <input type="number" name="precio" placeholder="Precio de Venta (Bs)" value={editingProduct.precio} onChange={handleEditProductChange} required step="0.01" className="w-full p-3 border rounded-lg"/>
                                 <input type="number" name="stock" placeholder="Stock" value={editingProduct.stock} onChange={handleEditProductChange} required className="w-full p-3 border rounded-lg"/>
                                 <select
+                                    name="vista_producto"
+                                    value={editingProduct.vista_producto ?? currentProductView}
+                                    onChange={handleEditProductChange}
+                                    className="w-full p-3 border rounded-lg bg-white"
+                                >
+                                    <option value="articulos">Vista: Articulos</option>
+                                    <option value="insumos">Vista: Insumos</option>
+                                </select>
+                                <select
                                     name="category_id"
                                     value={editingProduct.category_id ?? ''}
                                     onChange={handleEditProductChange}
@@ -2251,17 +2544,17 @@ export default function AdminProductosPage() {
                                     <option value="">-- Seleccionar Categoría --</option>
                                     {categories.map(cat => (<option key={cat.id} value={cat.id}>{cat.categori}</option>))}
                                 </select>
-                                <input 
-                                    type="text" 
-                                    name="codigo_barra" 
-                                    placeholder="Código de Barra" 
-                                    value={editingProduct.codigo_barra} 
-                                    onChange={handleEditProductChange} 
-                                    className="w-full p-3 border rounded-lg" 
+                                <input
+                                    type="text"
+                                    name="codigo_barra"
+                                    placeholder="Código de Barra"
+                                    value={editingProduct.codigo_barra}
+                                    onChange={handleEditProductChange}
+                                    className="w-full p-3 border rounded-lg"
                                     maxLength={13}
-                                /> 
+                                />
                             </div>
-                            
+
                             {/* Imágenes Actuales (con opción a eliminar) */}
                             <div className="border p-3 rounded-lg">
                                 <label className="block text-gray-700 font-medium mb-2">Imágenes Actuales (Click para eliminar)</label>
@@ -2298,18 +2591,18 @@ export default function AdminProductosPage() {
                                 />
                                 {editImageFiles.length > 0 && <span className="text-sm text-gray-500 mt-1">{editImageFiles.length} nuevo(s) archivo(s) listo(s) para subir.</span>}
                             </div>
-                            
+
                             <div className="flex justify-end space-x-4 pt-4">
                                 <button type="button" onClick={closeEditModal} className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition">Cancelar</button>
                                 <button type="submit" disabled={loading} className={`px-4 py-2 font-bold text-white rounded-lg transition ${loading ? 'bg-indigo-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
-                                    {loading ? 'Guardando...' : '💾 Guardar Cambios'}
+                                    {loading ? 'Guardando...' : 'Guardar Cambios'}
                                 </button>
                             </div>
                         </form>
                     </div>
                 </div>
             )}
-            
+
             {/* Modal de Selección de Colores para Imprimir */}
             <PrintVariantesModal
                 isOpen={isPrintModalOpen}
@@ -2335,9 +2628,9 @@ export default function AdminProductosPage() {
                         ? 'browser-per-label'
                         : (ENABLE_QZ_CUT_ONLY_AFTER_BROWSER_PRINT ? 'browser-final' : 'off')))}
             />
-            
+
             {/* Modal de Confirmación de Eliminación */}
-            <DeleteConfirmationModal 
+            <DeleteConfirmationModal
                 isOpen={showDeleteModal}
                 onClose={() => setShowDeleteModal(false)}
                 onConfirm={confirmDelete}
@@ -2353,7 +2646,7 @@ export default function AdminProductosPage() {
                 productName={selectedImageName}
                 onPrev={prevImage}
                 onNext={nextImage}
-            /> 
+            />
         </div> // Cierre del div principal
     ); // Cierre del return
 } // Cierre de la función AdminProductosPage

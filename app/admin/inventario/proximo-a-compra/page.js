@@ -1,33 +1,37 @@
 "use client";
 import { useEffect, useState } from "react";
-import { getSupabaseClient } from "../../../../lib/SupabaseClient";
+import { supabase } from "../../../../lib/SupabaseClient";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../../components/ui/card";
 import { Button } from "../../../../components/ui/button";
 import { whatsappUtils } from "../../../../lib/config";
 import ExpandableDescription from "../../../../components/ui/ExpandableDescription";
 import { getOptimizedImageUrl, buildImageSrcSet } from "../../../../lib/imageOptimization";
+import { useSucursalActiva } from "../../../../components/admin/SucursalContext";
 
 export default function ProximoACompraPage() {
+  const { activeSucursalId } = useSucursalActiva();
   const [productos, setProductos] = useState([]);
   const [imagenes, setImagenes] = useState({});
 
   useEffect(() => {
     async function fetchProductos() {
-      const supabase = getSupabaseClient();
-      const { data, error } = await supabase
+      let query = supabase
         .from("productos")
         .select("user_id, nombre, descripcion, precio, stock, categoria");
+      if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+      const { data, error } = await query;
       if (!error && data) {
         const bajos = data.filter(p => Number(p.stock) < 3);
         setProductos(bajos);
         // Obtener imágenes
         const ids = bajos.map(p => p.user_id);
         if (ids.length > 0) {
-          const supabase = getSupabaseClient();
-          const { data: imgs } = await supabase
+          let imgsQuery = supabase
             .from("producto_imagenes")
             .select("producto_id, imagen_url")
             .in("producto_id", ids);
+          if (activeSucursalId) imgsQuery = imgsQuery.eq("sucursal_id", activeSucursalId);
+          const { data: imgs } = await imgsQuery;
           if (imgs) {
             const agrupadas = {};
             imgs.forEach(img => {
@@ -40,7 +44,7 @@ export default function ProximoACompraPage() {
       }
     }
     fetchProductos();
-  }, []);
+  }, [activeSucursalId]);
 
   const enviarWhatsapp = (prod) => {
     const mensaje = `Hola, necesito reponer el producto: ${prod.nombre} (Stock actual: ${prod.stock})`;

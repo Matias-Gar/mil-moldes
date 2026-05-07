@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
-import { getSupabaseClient } from "../../../../lib/SupabaseClient";
+import { supabase } from "../../../../lib/SupabaseClient";
 import dynamic from "next/dynamic";
+import { useSucursalActiva } from "../../../../components/admin/SucursalContext";
 
 const Pie = dynamic(() => import("react-chartjs-2").then(mod => mod.Pie), { ssr: false });
 const Line = dynamic(() => import("react-chartjs-2").then(mod => mod.Line), { ssr: false });
@@ -11,6 +12,7 @@ import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearSca
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, BarElement);
 
 export default function InventarioEstadisticaPage() {
+  const { activeSucursalId } = useSucursalActiva();
   const [productos, setProductos] = useState([]);
   const [ventas, setVentas] = useState([]);
   const [detalles, setDetalles] = useState([]);
@@ -25,11 +27,12 @@ export default function InventarioEstadisticaPage() {
     async function loadAll() {
       setLoading(true);
       // 1) productos
-      const supabase = getSupabaseClient();
-      const { data: prodsData } = await supabase
+      let prodsQuery = supabase
         .from("productos")
         .select("user_id, nombre, precio, stock, categoria")
         .limit(5000);
+      if (activeSucursalId) prodsQuery = prodsQuery.eq("sucursal_id", activeSucursalId);
+      const { data: prodsData } = await prodsQuery;
       const prods = Array.isArray(prodsData) ? prodsData : [];
       setProductos(prods);
 
@@ -38,12 +41,14 @@ export default function InventarioEstadisticaPage() {
       const fromDate = new Date();
       fromDate.setDate(toDate.getDate() - periodDays);
 
-      const { data: ventasData } = await supabase
+      let ventasQuery = supabase
         .from("ventas")
         .select("id, total, fecha")
         .gte("fecha", fromDate.toISOString())
         .lte("fecha", toDate.toISOString())
         .order("fecha", { ascending: true });
+      if (activeSucursalId) ventasQuery = ventasQuery.eq("sucursal_id", activeSucursalId);
+      const { data: ventasData } = await ventasQuery;
       const vData = Array.isArray(ventasData) ? ventasData : [];
       setVentas(vData);
 
@@ -51,10 +56,12 @@ export default function InventarioEstadisticaPage() {
       const ventaIds = vData.map(v => v.id).filter(Boolean);
       let dets = [];
       if (ventaIds.length > 0) {
-        const { data: detData } = await supabase
+        let detallesQuery = supabase
           .from("ventas_detalle")
           .select("venta_id, producto_id, cantidad, precio_unitario")
           .in("venta_id", ventaIds);
+        if (activeSucursalId) detallesQuery = detallesQuery.eq("sucursal_id", activeSucursalId);
+        const { data: detData } = await detallesQuery;
         dets = Array.isArray(detData) ? detData : [];
       }
       setDetalles(dets);
@@ -63,7 +70,7 @@ export default function InventarioEstadisticaPage() {
     }
 
     loadAll();
-  }, [periodDays]);
+  }, [periodDays, activeSucursalId]);
 
   // Basic KPIs
   const totalProductos = productos.length;

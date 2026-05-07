@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getSupabaseClient } from "../../../lib/SupabaseClient";
+import { supabase } from "../../../lib/SupabaseClient";
 import { showToast } from "../../../components/ui/Toast";
+import { useSucursalActiva } from "../../../components/admin/SucursalContext";
 
 export default function AdminCategorias() {
   const router = useRouter();
+  const { activeSucursalId } = useSucursalActiva();
 
   const [categorias, setCategorias] = useState([]);
   const [productos, setProductos] = useState([]);
@@ -15,13 +17,15 @@ export default function AdminCategorias() {
   const [nombreEdit, setNombreEdit] = useState("");
 
   useEffect(() => {
+    if (!activeSucursalId) return;
     fetchCategorias();
     fetchProductos();
-  }, []);
+  }, [activeSucursalId]);
 
   async function fetchCategorias() {
-    const supabase = getSupabaseClient();
-    const { data, error } = await supabase.from("categorias").select("*");
+    let query = supabase.from("categorias").select("*");
+    if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+    const { data, error } = await query;
     if (error) {
       showToast("Error al cargar categorías", "error");
     } else {
@@ -30,8 +34,9 @@ export default function AdminCategorias() {
   }
 
   async function fetchProductos() {
-    const supabase = getSupabaseClient();
-    const { data, error } = await supabase.from("productos").select("*");
+    let query = supabase.from("productos").select("*");
+    if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+    const { data, error } = await query;
     if (error) {
       showToast("Error al cargar productos", "error");
     } else {
@@ -43,10 +48,9 @@ export default function AdminCategorias() {
     e.preventDefault();
     if (!nuevaCategoria.trim()) return;
 
-    const supabase = getSupabaseClient();
     const { error } = await supabase
       .from("categorias")
-      .insert({ categori: nuevaCategoria });
+      .insert({ categori: nuevaCategoria, sucursal_id: activeSucursalId });
 
     if (error) {
       showToast("Error al agregar la categoría", "error");
@@ -65,8 +69,9 @@ export default function AdminCategorias() {
   async function handleEliminar(id) {
     if (!confirm("¿Eliminar esta categoría?")) return;
 
-    const supabase = getSupabaseClient();
-    const { error } = await supabase.from("categorias").delete().eq("id", id);
+    let query = supabase.from("categorias").delete().eq("id", id);
+    if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+    const { error } = await query;
 
     if (error) {
       showToast("Error al eliminar la categoría", "error");
@@ -79,11 +84,11 @@ export default function AdminCategorias() {
   async function handleGuardarEdit(id) {
     if (!nombreEdit.trim()) return;
 
-    const supabase = getSupabaseClient();
     const { error } = await supabase
       .from("categorias")
       .update({ categori: nombreEdit })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("sucursal_id", activeSucursalId);
 
     if (error) {
       showToast("Error al guardar la categoría", "error");
