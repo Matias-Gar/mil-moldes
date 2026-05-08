@@ -378,8 +378,11 @@ export default function NuevaVenta() {
           const factorConversion = Number(p.factor_conversion ?? unidadesProducto.factor_conversion ?? productoCompleto.factor_conversion ?? 0) || undefined;
           const cantidadBase = normalizeQuantity(p.cantidad_base ?? p.cantidad ?? 1);
           const cantidadDisplay = normalizeQuantity(p.cantidad_display ?? p.cantidad ?? 1);
+          const productoId = productoCompleto.producto_id || prodId;
           return {
             ...productoCompleto,
+            user_id: productoId,
+            producto_id: productoId,
             cantidad: cantidadBase,
             cantidad_base: cantidadBase,
             cantidad_display: cantidadDisplay,
@@ -389,7 +392,7 @@ export default function NuevaVenta() {
             unidades_disponibles: [unidadBase, ...unidadesAlternativas.filter((u: string) => u !== unidadBase)],
             factor_conversion: factorConversion,
             tipo: 'producto',
-            cart_key: `prod:${productoCompleto.producto_id}:${p.variante_id || 'default'}:${p.unidad || unidadBase}`,
+            cart_key: `prod:${productoId}:${p.variante_id || 'default'}:${p.unidad || unidadBase}`,
             variante_id: p.variante_id || productoCompleto.variante_id,
             color: p.color || productoCompleto.color,
             precio: p.precio_unitario || productoCompleto.precio,
@@ -1319,10 +1322,10 @@ export default function NuevaVenta() {
   // ...continued building UI mostly replicates previous layout using components
 
   return (
-    <div className="min-h-screen w-full flex flex-col items-center justify-start py-8 px-2 bg-gradient-to-br from-gray-100 to-gray-300">
+    <div className="min-h-screen w-full flex flex-col items-center justify-start py-8 px-2 sm:px-4 bg-gradient-to-br from-gray-100 to-gray-300">
       <h1 className="text-3xl font-extrabold mb-8 text-gray-900 w-full text-center">Nueva Venta</h1>
-      <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-3 gap-6 bg-white rounded-xl shadow-xl p-0 mb-8 border border-gray-900">
-        <div className="col-span-1 lg:col-span-1 bg-gray-50 border-b lg:border-b-0 lg:border-r border-gray-200 p-6 sticky top-16 z-0 print:hidden flex flex-col h-full">
+      <div className="w-full max-w-[1500px] grid grid-cols-1 xl:grid-cols-[360px_minmax(0,1fr)] gap-6 bg-white rounded-xl shadow-xl p-0 mb-8 border border-gray-900">
+        <div className="bg-gray-50 border-b xl:border-b-0 xl:border-r border-gray-200 p-6 sticky top-16 z-0 print:hidden flex flex-col h-full">
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
               <span className="font-bold text-gray-900 text-lg">Resumen de la venta</span>
@@ -1374,7 +1377,7 @@ export default function NuevaVenta() {
             </button>
           </div>
         </div>
-        <div className="col-span-2 p-6">
+        <div className="min-w-0 p-6">
           <ClienteForm
             cliente={cliente}
             onChange={cambiarCampo}

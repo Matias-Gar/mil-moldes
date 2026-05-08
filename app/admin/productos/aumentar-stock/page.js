@@ -492,7 +492,8 @@ export default function AumentarStockPage() {
           usuario_email: user?.email || null
         });
       } catch (err) {
-        console.warn('No se pudo registrar movimiento/historial de aumento:', err);
+        console.error('No se pudo registrar movimiento/historial de aumento:', err);
+        showToast(`Stock actualizado, pero no se pudo registrar auditoria: ${err?.message || err}`, "error");
       }
 
       if (shouldPrint) {
@@ -577,7 +578,8 @@ export default function AumentarStockPage() {
           usuario_email: user?.email || null
         });
       } catch (err) {
-        console.warn('No se pudo registrar movimiento/historial de aumento (variante):', err);
+        console.error('No se pudo registrar movimiento/historial de aumento (variante):', err);
+        showToast(`Stock actualizado, pero no se pudo registrar auditoria: ${err?.message || err}`, "error");
       }
 
       setVariantesByProducto((prev) => ({

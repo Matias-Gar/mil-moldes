@@ -75,8 +75,12 @@ export default function CatalogoPage() {
             error: sucursalesError,
             setActiveSucursalId,
         } = usePublicSucursal();
-        const cartStorageBaseKey = currentPublicView === 'insumos' ? 'carrito_temporal_insumos' : 'carrito_temporal';
-        const cartStorageKey = `${cartStorageBaseKey}_${activeSucursalId || 'global'}`;
+        const cartStorageKey = `carrito_temporal_${activeSucursalId || 'global'}`;
+        const legacyCartStorageKeys = [
+            `carrito_temporal_insumos_${activeSucursalId || 'global'}`,
+            `carrito_temporal_${activeSucursalId || 'global'}`,
+            'carrito_temporal',
+        ];
     const [modalWarning, setModalWarning] = useState("");
     const [modalImg, setModalImg] = useState(null);
     const [addToCartModal, setAddToCartModal] = useState(null);
@@ -509,8 +513,30 @@ export default function CatalogoPage() {
 
     // 2. Cargar carrito desde localStorage al inicio
     useEffect(() => {
-        const stored = localStorage.getItem(cartStorageKey);
-        setCart(stored ? JSON.parse(stored) : []);
+        const byKey = new Map();
+        const readCart = (key) => {
+            try {
+                const stored = localStorage.getItem(key);
+                const parsed = stored ? JSON.parse(stored) : [];
+                return Array.isArray(parsed) ? parsed : [];
+            } catch {
+                return [];
+            }
+        };
+
+        [cartStorageKey, ...legacyCartStorageKeys].forEach((key) => {
+            readCart(key).forEach((item) => {
+                const itemKey = item.cart_key || getCartKey(item);
+                if (!byKey.has(itemKey)) byKey.set(itemKey, item);
+            });
+        });
+
+        const mergedCart = Array.from(byKey.values());
+        setCart(mergedCart);
+        localStorage.setItem(cartStorageKey, JSON.stringify(mergedCart));
+        legacyCartStorageKeys
+            .filter((key) => key !== cartStorageKey)
+            .forEach((key) => localStorage.removeItem(key));
     }, [cartStorageKey]);
 
     // 3. Guardar carrito en localStorage cada vez que cambia

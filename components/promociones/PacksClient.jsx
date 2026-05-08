@@ -6,6 +6,23 @@ import { supabase } from "@/lib/SupabaseClient";
 import Image from "next/image";
 import { useSucursalActiva } from "@/components/admin/SucursalContext";
 
+function normalizeSearch(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function formatDate(value) {
+  if (!value) return "";
+  try {
+    return new Date(value).toLocaleDateString("es-BO");
+  } catch {
+    return String(value);
+  }
+}
+
 export default function PacksClient({ initialPacks = [] }) {
   const { activeSucursalId } = useSucursalActiva();
 
@@ -15,7 +32,7 @@ export default function PacksClient({ initialPacks = [] }) {
   // Cargar todos los productos para edición
   useEffect(() => {
     if (editPack) {
-      let query = supabase.from("productos").select("user_id, nombre, precio, stock");
+      let query = supabase.from("productos").select("user_id, nombre, precio, stock, categoria, codigo_barra");
       if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
       query.then(({ data }) => setProductosAll(data || []));
     }
@@ -28,8 +45,33 @@ export default function PacksClient({ initialPacks = [] }) {
   const [nombre, setNombre] = useState("");
   const [descripcion, setDescripcion] = useState("");
   const [precioPack, setPrecioPack] = useState("");
+  const [fechaFin, setFechaFin] = useState("");
+  const [productSearch, setProductSearch] = useState("");
+  const [editProductSearch, setEditProductSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const filteredProductos = productos.filter((producto) => {
+    const term = normalizeSearch(productSearch);
+    if (!term) return true;
+    return [
+      producto.nombre,
+      producto.categoria,
+      producto.codigo_barra,
+      producto.user_id,
+    ].some((value) => normalizeSearch(value).includes(term));
+  });
+
+  const filteredProductosAll = productosAll.filter((producto) => {
+    const term = normalizeSearch(editProductSearch);
+    if (!term) return true;
+    return [
+      producto.nombre,
+      producto.categoria,
+      producto.codigo_barra,
+      producto.user_id,
+    ].some((value) => normalizeSearch(value).includes(term));
+  });
 
   const fetchPacks = async () => {
     let query = supabase
@@ -65,7 +107,7 @@ export default function PacksClient({ initialPacks = [] }) {
     setLoading(true);
     let query = supabase
       .from("productos")
-      .select("user_id, nombre, precio, stock");
+      .select("user_id, nombre, precio, stock, categoria, codigo_barra");
     if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
     const { data, error } = await query;
     setProductos(data || []);
@@ -80,6 +122,8 @@ export default function PacksClient({ initialPacks = [] }) {
     setNombre("");
     setDescripcion("");
     setPrecioPack("");
+    setFechaFin("");
+    setProductSearch("");
     setError("");
   };
 
@@ -131,6 +175,7 @@ export default function PacksClient({ initialPacks = [] }) {
           nombre: nombre || `Pack Especial: ${productosSeleccionados.map(p => p.nombre).join(' + ')}`,
           descripcion: descripcion || `Llévate ${productosSeleccionados.length} productos por un solo precio!`,
           precio_pack: Number(precioPack),
+          fecha_fin: fechaFin || null,
           activo: true,
           sucursal_id: activeSucursalId || null
         }
@@ -161,7 +206,7 @@ export default function PacksClient({ initialPacks = [] }) {
     await fetchPacks();
     setShowForm(false);
     setSelected([]);
-    setNombre(""); setDescripcion(""); setPrecioPack("");
+    setNombre(""); setDescripcion(""); setPrecioPack(""); setFechaFin("");
     setLoading(false);
   };
 
@@ -181,8 +226,15 @@ export default function PacksClient({ initialPacks = [] }) {
           <h2 className="text-2xl font-bold mb-6 text-gray-900 text-center">Crear Pack Especial</h2>
           <div className="mb-6">
             <label className="block mb-2 font-semibold text-gray-800 text-base">Selecciona productos <span className="text-red-500">*</span></label>
+            <input
+              type="search"
+              value={productSearch}
+              onChange={(event) => setProductSearch(event.target.value)}
+              placeholder="Buscar producto, categoria o codigo"
+              className="mb-3 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+            />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-52 overflow-y-auto bg-gray-50 rounded-lg p-3 border border-gray-200">
-              {productos.map(p => {
+              {filteredProductos.map(p => {
                 const checked = selected.some(sel => sel.producto_id === p.user_id);
                 const cantidad = selected.find(sel => sel.producto_id === p.user_id)?.cantidad || 1;
                 return (
@@ -209,6 +261,11 @@ export default function PacksClient({ initialPacks = [] }) {
                   </div>
                 );
               })}
+              {!loading && filteredProductos.length === 0 && (
+                <div className="col-span-full rounded-md bg-white px-3 py-4 text-center text-sm font-semibold text-gray-500">
+                  No hay productos que coincidan con la busqueda.
+                </div>
+              )}
             </div>
           </div>
           <div className="mb-5">
@@ -230,6 +287,15 @@ export default function PacksClient({ initialPacks = [] }) {
               value={nombre}
               onChange={e => setNombre(e.target.value)}
               placeholder="Pack Especial: Producto A + Producto B"
+            />
+          </div>
+          <div className="mb-5">
+            <label className="block mb-1 font-semibold text-gray-800">Fecha limite (opcional)</label>
+            <input
+              className="w-full p-2 rounded-lg border border-gray-300 bg-white text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+              value={fechaFin}
+              onChange={e => setFechaFin(e.target.value)}
+              type="date"
             />
           </div>
           <div className="mb-5">
@@ -294,7 +360,10 @@ export default function PacksClient({ initialPacks = [] }) {
                   <button
                     className="bg-yellow-400 hover:bg-yellow-500 text-gray-900 px-2 py-1 rounded font-bold text-xs shadow"
                     title="Editar pack"
-                    onClick={() => setEditPack(p)}
+                    onClick={() => {
+                      setEditProductSearch("");
+                      setEditPack(p);
+                    }}
                   >✏️ Editar</button>
                   <button
                     className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded font-bold text-xs shadow"
@@ -315,6 +384,11 @@ export default function PacksClient({ initialPacks = [] }) {
                 </div>
               </div>
               <div className="text-purple-700 mb-2 text-sm font-semibold">{p.descripcion}</div>
+              {p.fecha_fin && (
+                <div className="mb-2 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">
+                  Hasta: {formatDate(p.fecha_fin)}
+                </div>
+              )}
               <div className="mb-2 text-xs text-purple-800 font-bold">Incluye:</div>
               <ul className="mb-2 ml-2 text-sm text-purple-900 list-disc">
                 {Array.isArray(p.pack_productos) && p.pack_productos.map((item, idx) => (
@@ -339,6 +413,7 @@ export default function PacksClient({ initialPacks = [] }) {
                     const form = e.target;
                     const nombre = form.nombre.value.trim();
                     const descripcion = form.descripcion.value.trim();
+                    const fecha_fin = form.fecha_fin.value || null;
                     let imagen_url = editPack.imagen_url;
                     // Subida de imagen si hay archivo nuevo
                     const file = form.imagen.files[0];
@@ -364,7 +439,7 @@ export default function PacksClient({ initialPacks = [] }) {
                       return;
                     }
                     // Actualizar pack en la base de datos
-                    let packQuery = supabase.from('packs').update({ nombre, descripcion, imagen_url }).eq('id', editPack.id);
+                    let packQuery = supabase.from('packs').update({ nombre, descripcion, imagen_url, fecha_fin }).eq('id', editPack.id);
                     if (activeSucursalId) packQuery = packQuery.eq('sucursal_id', activeSucursalId);
                     const { error } = await packQuery;
                     if (error) {
@@ -398,6 +473,15 @@ export default function PacksClient({ initialPacks = [] }) {
                     <input name="descripcion" defaultValue={editPack.descripcion} className="w-full border border-purple-300 rounded px-3 py-2" />
                   </div>
                   <div className="mb-4">
+                    <label className="block text-sm font-bold text-gray-700 mb-1">Fecha limite</label>
+                    <input
+                      name="fecha_fin"
+                      type="date"
+                      defaultValue={editPack.fecha_fin ? String(editPack.fecha_fin).slice(0, 10) : ""}
+                      className="w-full border border-purple-300 rounded px-3 py-2"
+                    />
+                  </div>
+                  <div className="mb-4">
                     <label className="block text-sm font-bold text-gray-700 mb-1">Imagen del pack</label>
                     {editPack.imagen_url && (
                       <Image src={editPack.imagen_url} alt="Imagen actual del pack" width={96} height={96} className="w-24 h-24 object-cover rounded mb-2 border" />
@@ -406,8 +490,15 @@ export default function PacksClient({ initialPacks = [] }) {
                   </div>
                   <div className="mb-4">
                     <label className="block text-sm font-bold text-gray-700 mb-1">Productos del pack</label>
+                    <input
+                      type="search"
+                      value={editProductSearch}
+                      onChange={(event) => setEditProductSearch(event.target.value)}
+                      placeholder="Buscar producto, categoria o codigo"
+                      className="mb-2 w-full rounded border border-purple-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
+                    />
                     <div className="max-h-40 overflow-y-auto border rounded p-2 bg-purple-50">
-                      {productosAll.map(prod => {
+                      {filteredProductosAll.map(prod => {
                         const checked = Array.isArray(editPack.pack_productos) && editPack.pack_productos.some(pp => pp.producto_id === prod.user_id);
                         const cantidad = Array.isArray(editPack.pack_productos) && editPack.pack_productos.find(pp => pp.producto_id === prod.user_id)?.cantidad || 1;
                         return (
@@ -433,6 +524,11 @@ export default function PacksClient({ initialPacks = [] }) {
                           </div>
                         );
                       })}
+                      {filteredProductosAll.length === 0 && (
+                        <div className="rounded-md bg-white px-3 py-4 text-center text-sm font-semibold text-gray-500">
+                          No hay productos que coincidan con la busqueda.
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="flex gap-2 justify-end mt-6">

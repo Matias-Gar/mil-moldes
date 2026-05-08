@@ -57,16 +57,16 @@ export default function CarritoPanel({
         <div className="text-gray-900">No hay productos en el carrito.</div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm md:text-base bg-white rounded-xl shadow-xl border border-gray-900 text-center">
+          <table className="w-full min-w-[920px] text-sm md:text-base bg-white rounded-xl shadow-xl border border-gray-900 text-center">
             <thead>
               <tr className="bg-gray-200 text-gray-900">
-                <th className="p-2">Imagen</th>
+                <th className="w-20 p-2">Imagen</th>
                 <th className="p-2">Nombre</th>
-                <th className="p-2">Cantidad</th>
-                <th className="p-2">Precio</th>
-                <th className="p-2">Descuento</th>
-                <th className="p-2">Subtotal</th>
-                <th className="p-2">Quitar</th>
+                <th className="w-48 p-2">Cantidad</th>
+                <th className="w-28 p-2">Precio</th>
+                <th className="w-28 p-2">Descuento</th>
+                <th className="w-28 p-2">Subtotal</th>
+                <th className="w-24 p-2">Quitar</th>
               </tr>
             </thead>
             <tbody>
