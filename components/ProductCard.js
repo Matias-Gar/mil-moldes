@@ -21,7 +21,10 @@ export default function ProductCard({
   const imagesArr = editData.reordered ?? editData.originalImages ?? [];
   const variantsArr = editData.variantes ?? editData.originalVariants ?? [];
   const totalStockFromVariants = variantsArr.reduce(
-    (sum, v) => sum + (parseInt(v?.stock ?? 0) || 0),
+    (sum, v) => {
+      const parsed = Number(String(v?.stock_decimal ?? v?.stock ?? 0).replace(",", "."));
+      return sum + (Number.isFinite(parsed) ? Math.max(0, parsed) : 0);
+    },
     0
   );
   // Siempre usar la imagen del producto, nunca de variante

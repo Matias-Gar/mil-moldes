@@ -29,18 +29,11 @@ export async function sincronizarStockProducto(
 ): Promise<number> {
   const { data: producto } = await (supabase as any)
     .from("productos")
-    .select("stock, unidades_alternativas, factor_conversion")
+    .select("stock")
     .eq("user_id", producto_id)
     .maybeSingle();
 
   const productStock = Number((producto as any)?.stock ?? 0);
-  const hasConversion = Array.isArray((producto as any)?.unidades_alternativas)
-    && (producto as any).unidades_alternativas.length > 0
-    && Number((producto as any)?.factor_conversion || 0) > 0;
-
-  if (hasConversion) {
-    return Number.isFinite(productStock) ? Math.max(0, productStock) : 0;
-  }
 
   const { data } = await (supabase as any)
     .from("producto_variantes")

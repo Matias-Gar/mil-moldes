@@ -142,12 +142,8 @@ function hasUnitConversion(product?: { unidades_alternativas?: string[]; factor_
   );
 }
 
-function shouldUseProductStockForVariant(product?: { unidades_alternativas?: string[]; factor_conversion?: number; producto_variantes?: unknown[] } | null) {
-  return hasUnitConversion(product);
-}
-
 function getStockForVariantSale(product: ProductoDB, variant?: { stock?: number; stock_decimal?: number } | null) {
-  return shouldUseProductStockForVariant(product) ? getProductStock(product) : getVariantStock(variant);
+  return variant ? getVariantStock(variant) : getProductStock(product);
 }
 
 function formatStockQuantity(value: number) {

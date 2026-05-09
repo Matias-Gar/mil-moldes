@@ -270,7 +270,7 @@ export default function EditarCatalogo() {
 
 
       // 1. Actualizar producto (campos básicos, stock e imagen principal)
-      const stockTotal = nuevasVariantes.reduce((acc, v) => acc + (parseInt(v.stock, 10) || 0), 0);
+      const stockTotal = nuevasVariantes.reduce((acc, v) => acc + (parseDecimalInput(v.stock, 0) || 0), 0);
       // Determinar la imagen principal (primera del array de imágenes)
       let imagenPrincipal = null;
       if (nuevasImagenes.length > 0) {
@@ -318,8 +318,8 @@ export default function EditarCatalogo() {
           await supabase.from("producto_variantes").update({
             color: v.color,
             talla: v.talla,
-            stock: Math.max(0, Math.floor(Number(v.stock) || 0)),
-            stock_decimal: Number(v.stock) || 0,
+            stock: Math.max(0, Math.floor(parseDecimalInput(v.stock, 0) || 0)),
+            stock_decimal: Math.max(0, parseDecimalInput(v.stock, 0) || 0),
             sku: v.sku,
             precio: parseDecimalInput(v.precio, null),
             imagen_url: v.imagen_url,
@@ -332,10 +332,10 @@ export default function EditarCatalogo() {
             sucursal_id: activeSucursalId || null,
             color: v.color,
             talla: v.talla,
-            stock: Math.max(0, Math.floor(Number(v.stock) || 0)),
-            stock_decimal: Number(v.stock) || 0,
-            stock_inicial: Math.max(0, Math.floor(Number(v.stock) || 0)),
-            stock_inicial_decimal: Number(v.stock) || 0,
+            stock: Math.max(0, Math.floor(parseDecimalInput(v.stock, 0) || 0)),
+            stock_decimal: Math.max(0, parseDecimalInput(v.stock, 0) || 0),
+            stock_inicial: Math.max(0, Math.floor(parseDecimalInput(v.stock, 0) || 0)),
+            stock_inicial_decimal: Math.max(0, parseDecimalInput(v.stock, 0) || 0),
             sku: v.sku,
             precio: parseDecimalInput(v.precio, null),
             imagen_url: v.imagen_url,

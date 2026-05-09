@@ -10,6 +10,7 @@ import { usePromociones } from '../../../lib/usePromociones';
 import { getOptimizedImageUrl, buildImageSrcSet } from '../../../lib/imageOptimization';
 import { optimizeImageForUpload } from '../../../lib/imageUploadOptimization';
 import { canAccessAdminPath } from '../../../lib/adminPermissions';
+import { sincronizarStockProducto } from '../../../lib/utils';
 import { normalizeProductView } from '../../../lib/productViews';
 import { useSucursalActiva } from '../../../components/admin/SucursalContext';
 
@@ -17,6 +18,12 @@ import { useSucursalActiva } from '../../../components/admin/SucursalContext';
 // Si la tabla usa react-barcode, este dynamic es necesario. Si solo usa la función handlePrintBarcode, se podría quitar.
 // Lo mantendremos por si acaso el componente de tabla lo usa internamente.
 const Barcode = dynamic(() => import('react-barcode'), { ssr: false });
+
+function parseDecimalInput(value, fallback = 0) {
+    if (value === undefined || value === null || value === "") return fallback;
+    const parsed = Number(String(value).replace(/\s/g, "").replace(",", "."));
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
 
 // Generador de código de barras EAN13 simple
 function generateBarcode() {
@@ -574,7 +581,7 @@ export default function AdminProductosPage() {
                 nombre: newProduct.nombre,
                 descripcion: newProduct.descripcion,
                 precio: parseFloat(newProduct.precio) || 0,
-                stock: parseInt(newProduct.stock) || 0,
+                stock: Math.max(0, parseDecimalInput(newProduct.stock, 0)),
                 category_id: categoryIdValue,
                 codigo_barra: codigoBarra,
                 vista_producto: normalizeProductView(newProduct.vista_producto),
@@ -676,7 +683,7 @@ export default function AdminProductosPage() {
                     descripcion: editingProduct.descripcion,
                     precio: parseFloat(editingProduct.precio) || 0,
                     precio_compra: parseFloat(editingProduct.precio_compra) || 0,
-                    stock: parseInt(editingProduct.stock) || 0,
+                    stock: Math.max(0, parseDecimalInput(editingProduct.stock, 0)),
                     category_id: categoryIdValue,
                     vista_producto: normalizeProductView(editingProduct.vista_producto),
                     // Dejamos el codigo_barra para que no se re-genere si se guarda sin querer
@@ -688,6 +695,7 @@ export default function AdminProductosPage() {
             if (updateError) {
                 throw new Error(updateError.message);
             }
+            await sincronizarStockProducto(editingProduct.user_id, supabase);
 
             // 3. Eliminar imágenes quitadas (de la tabla producto_imagenes)
             const originales = imagenesProductos[editingProduct.user_id] || [];

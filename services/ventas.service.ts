@@ -87,89 +87,38 @@ export async function insertarVentaDetalle(item: GenericPayload) {
 }
 
 export async function descontarStock(pid: ProductoId, cantidad: number) {
-  const rpcResult = await supabase.rpc('descontar_stock', { pid, cantidad_desc: cantidad });
-  if (!rpcResult.error) return rpcResult;
-
-  // Fallback defensivo cuando la RPC no existe o tiene firma ambigua.
-  const { data: product, error: fetchError } = await supabase
-    .from('productos')
-    .select('stock')
-    .eq('user_id', pid)
-    .maybeSingle();
-
-  if (fetchError) return { data: null, error: fetchError };
-  if (!product) return { data: null, error: { message: `Producto no encontrado: ${pid}` } as ServiceError };
-
-  const currentStock = Number(product.stock || 0);
-  const nextStock = Math.max(0, currentStock - Number(cantidad || 0));
-
-  const { error: updateError } = await supabase
-    .from('productos')
-    .update({ stock: nextStock })
-    .eq('user_id', pid);
-
-  return { data: null, error: updateError };
+  return {
+    data: null,
+    error: { message: `descontarStock(${pid}, ${cantidad}) esta bloqueado. Usa crearVentaCompleta para descontar stock con auditoria.` } as ServiceError,
+  };
 }
 
 export async function establecerStockProducto(pid: ProductoId, stockDecimal: number) {
-  const nextStock = Math.max(0, Number(stockDecimal || 0));
-  const { error: updateError } = await supabase
-    .from('productos')
-    .update({ stock: nextStock })
-    .eq('user_id', pid);
-
-  return { data: null, error: updateError };
+  return {
+    data: null,
+    error: { message: `establecerStockProducto(${pid}, ${stockDecimal}) esta bloqueado. Usa aumentarStockCompleto o transferencia con auditoria.` } as ServiceError,
+  };
 }
 
 export async function descontarStockVariante(varianteId: ProductoId, cantidad: number) {
-  const { data: variant, error: fetchError } = await supabase
-    .from('producto_variantes')
-    .select('stock, stock_decimal')
-    .eq('id', varianteId)
-    .maybeSingle();
-
-  if (fetchError) return { data: null, error: fetchError };
-  if (!variant) return { data: null, error: { message: `Variante no encontrada: ${varianteId}` } as ServiceError };
-
-  const currentDecimal = Number((variant as GenericPayload).stock_decimal ?? (variant as GenericPayload).stock ?? 0);
-  const nextDecimal = Math.max(0, currentDecimal - Number(cantidad || 0));
-  const nextLegacyStock = Math.floor(nextDecimal);
-
-  const { error: updateError } = await supabase
-    .from('producto_variantes')
-    .update({
-      stock_decimal: nextDecimal,
-      stock: nextLegacyStock,
-    })
-    .eq('id', varianteId);
-
-  return { data: null, error: updateError };
+  return {
+    data: null,
+    error: { message: `descontarStockVariante(${varianteId}, ${cantidad}) esta bloqueado. Usa crearVentaCompleta para descontar stock con auditoria.` } as ServiceError,
+  };
 }
 
 export async function establecerStockVariante(varianteId: ProductoId, stockDecimal: number) {
-  const nextDecimal = Math.max(0, Number(stockDecimal || 0));
-  const nextLegacyStock = Math.floor(nextDecimal);
-
-  const { error: updateError } = await supabase
-    .from('producto_variantes')
-    .update({
-      stock_decimal: nextDecimal,
-      stock: nextLegacyStock,
-    })
-    .eq('id', varianteId);
-
-  return { data: null, error: updateError };
+  return {
+    data: null,
+    error: { message: `establecerStockVariante(${varianteId}, ${stockDecimal}) esta bloqueado. Usa aumentarStockCompleto o transferencia con auditoria.` } as ServiceError,
+  };
 }
 
 export async function establecerStockLegacyVariante(varianteId: ProductoId, stockLegacy: number) {
-  const nextLegacyStock = Math.max(0, Math.floor(Number(stockLegacy || 0)));
-
-  const { error: updateError } = await supabase
-    .from('producto_variantes')
-    .update({ stock: nextLegacyStock })
-    .eq('id', varianteId);
-
-  return { data: null, error: updateError };
+  return {
+    data: null,
+    error: { message: `establecerStockLegacyVariante(${varianteId}, ${stockLegacy}) esta bloqueado. Usa aumentarStockCompleto o transferencia con auditoria.` } as ServiceError,
+  };
 }
 
 export async function guardarCarritoPendiente(payload: GenericPayload) {

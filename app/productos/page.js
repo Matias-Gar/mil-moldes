@@ -64,6 +64,20 @@ function getEffectiveVariantStock(variant) {
     return Math.max(0, Number.isFinite(decimal) && decimal > 0 ? decimal : legacy || 0);
 }
 
+function isDefaultUniqueVariant(variant) {
+    const color = String(variant?.color || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+    return !color || color === 'unico' || color === 'sin color';
+}
+
+function hasRealVariantId(variant) {
+    const id = variant?.variante_id ?? variant?.id;
+    return id !== undefined && id !== null && String(id).trim() !== '' && String(id) !== 'undefined';
+}
+
 export default function CatalogoPage() {
         const pathname = usePathname();
         const currentPublicView = pathname?.startsWith('/insumos') ? 'insumos' : 'articulos';
@@ -155,29 +169,9 @@ export default function CatalogoPage() {
         const variantes = Array.isArray(producto?.variantes) ? producto.variantes : [];
         const productStock = Math.max(0, Number(producto?.stock ?? producto?.stock_total ?? 0));
         const totalVariantStock = variantes.reduce((acc, variante) => acc + getEffectiveVariantStock(variante), 0);
-        const hasUnitConversion =
-            Array.isArray(producto?.unidades_alternativas) &&
-            producto.unidades_alternativas.length > 0 &&
-            Number(producto?.factor_conversion || 0) > 0;
-        if (hasUnitConversion && Number.isFinite(productStock)) {
-            return productStock;
-        }
-        if (hasUnitConversion && varianteId === null && Number.isFinite(productStock)) {
-            return productStock > 0 ? productStock : totalVariantStock;
-        }
         if (variantes.length > 0) {
             if (varianteId !== null && varianteId !== undefined) {
                 const variante = variantes.find((v) => String(v.variante_id ?? v.id) === String(varianteId));
-                const variantStock = getEffectiveVariantStock(variante);
-                if (
-                    hasUnitConversion &&
-                    variantes.length === 1 &&
-                    Number.isFinite(productStock) &&
-                    productStock > 0 &&
-                    productStock < variantStock
-                ) {
-                    return productStock;
-                }
                 return getEffectiveVariantStock(variante);
             }
             return totalVariantStock > 0 || productStock <= 0 ? totalVariantStock : productStock;
@@ -584,30 +578,22 @@ export default function CatalogoPage() {
 
     // Buscar producto en el carrito por id y variante
     const getVariantes = (producto) => (Array.isArray(producto.variantes) ? producto.variantes : []);
+    const isPseudoUniqueProduct = (variantes) =>
+        Array.isArray(variantes) &&
+        variantes.length === 1 &&
+        isDefaultUniqueVariant(variantes[0]) &&
+        !hasRealVariantId(variantes[0]);
 
     const getStockDisponibleProducto = (producto, varianteId = null) => {
                 const variantes = getVariantes(producto);
                 const productStock = Math.max(0, Number(producto?.stock || 0));
-                const hasUnitConversion =
-                    Array.isArray(producto?.unidades_alternativas) &&
-                    producto.unidades_alternativas.length > 0 &&
-                    Number(producto?.factor_conversion || 0) > 0;
-                if (hasUnitConversion && Number.isFinite(productStock)) {
-                    return productStock;
-                }
-
                 if (variantes.length > 0) {
                         if (varianteId !== null && varianteId !== undefined) {
                                 const variante = variantes.find(function(v) { return String(v.variante_id ?? v.id) === String(varianteId); });
-                                const variantStock = getEffectiveVariantStock(variante);
-                                if (hasUnitConversion && variantes.length === 1 && Number.isFinite(productStock)) {
-                                    return productStock > 0 ? productStock : variantStock;
-                                }
-                                return variantStock;
+                                return getEffectiveVariantStock(variante);
                         }
                         const totalDisponible = variantes.reduce(function(acc, v) { return acc + getEffectiveVariantStock(v); }, 0);
-                        if (hasUnitConversion) return productStock > 0 ? productStock : totalDisponible;
-                        return Math.max(0, totalDisponible);
+                        return totalDisponible > 0 || productStock <= 0 ? Math.max(0, totalDisponible) : productStock;
                 }
 
                 // Stock base
@@ -655,7 +641,8 @@ export default function CatalogoPage() {
     };
 
     const openAddToCartModal = (producto) => {
-        const variantes = getVariantes(producto);
+        const rawVariantes = getVariantes(producto);
+        const variantes = isPseudoUniqueProduct(rawVariantes) ? [] : rawVariantes;
         const productStockBase = getProductStockBase(producto);
         const hasUnitConversion =
             Array.isArray(producto?.unidades_alternativas) &&
@@ -666,7 +653,7 @@ export default function CatalogoPage() {
             (variantes.length === 1 && (hasUnitConversion ? productStockBase > 0 : true) ? variantes[0] : null);
         const defaultVarianteId = defaultVariante ? (defaultVariante.variante_id ?? defaultVariante.id) : null;
         const defaultStockBase = defaultVariante
-            ? (hasUnitConversion && variantes.length === 1 ? productStockBase : getEffectiveVariantStock(defaultVariante))
+            ? (getEffectiveVariantStock(defaultVariante) || productStockBase)
             : productStockBase;
         const unidades = getAvailableUnits(producto, defaultStockBase);
 
@@ -683,6 +670,7 @@ export default function CatalogoPage() {
         if (!addToCartModal?.producto) return;
         setModalWarning("");
         const { producto, variantes, cantidad, unidad } = addToCartModal;
+        const singleUniqueVariant = variantes.length === 1 && isDefaultUniqueVariant(variantes[0]);
         const selectedVarianteId = addToCartModal.selectedVarianteId || (variantes.length === 1 ? (variantes[0].variante_id ?? variantes[0].id) : null);
         let varianteSeleccionada = {
             variante_id: null,
@@ -712,7 +700,7 @@ export default function CatalogoPage() {
             } else {
                 productoDB = prodWithUnits;
             }
-            if (variantes.length > 0) {
+            if (variantes.length > 0 && !(singleUniqueVariant && !selectedVarianteId)) {
                 if (!selectedVarianteId) {
                     setModalWarning('Debes seleccionar un color para continuar.');
                     return;
@@ -730,7 +718,7 @@ export default function CatalogoPage() {
             return;
         }
 
-        if (variantes.length > 0) {
+        if (variantes.length > 0 && !(singleUniqueVariant && !varianteDB)) {
             if (!selectedVarianteId) {
                 setModalWarning('Debes seleccionar un color para continuar.');
                 return;
@@ -740,14 +728,7 @@ export default function CatalogoPage() {
                 setModalWarning('Selecciona un color válido para continuar.');
                 return;
             }
-            const hasUnitConversionForSale =
-                Array.isArray(productoDB?.unidades_alternativas) &&
-                productoDB.unidades_alternativas.length > 0 &&
-                Number(productoDB?.factor_conversion || producto.factor_conversion || 0) > 0;
-            const stockProductoActual = Math.max(0, Number(productoDB?.stock || 0));
-            const stockVarianteActual = hasUnitConversionForSale && variantes.length === 1
-                ? (stockProductoActual > 0 ? stockProductoActual : getEffectiveVariantStock(varianteDB))
-                : getEffectiveVariantStock(varianteDB);
+            const stockVarianteActual = getEffectiveVariantStock(varianteDB);
             if (stockVarianteActual <= 0) {
                 setModalWarning('Esa opción está agotada. Elige otra disponible.');
                 return;

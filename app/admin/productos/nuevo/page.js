@@ -1516,7 +1516,7 @@ export default function AdminProductosPage() {
                     const normalizedColor = String(v.color || '').trim() || 'Unico';
                     return {
                     color: normalizedColor,
-                    stock: parseInt(v.stock || 0) || 0,
+                    stock: Math.max(0, Number(String(v.stock || 0).replace(',', '.')) || 0),
                     precio: v.precio === '' ? null : (parseFloat(String(v.precio).replace(',', '.')) || 0),
                     sku: finalSku,
                     activo: v.activo !== false
@@ -1626,9 +1626,9 @@ export default function AdminProductosPage() {
                 const finalVariants = variantsPayload.map((v) => ({
                     producto_id: productoId,
                     color: v.color,
-                    stock: v.stock,
+                    stock: Math.max(0, Math.floor(Number(v.stock) || 0)),
                     stock_decimal: Number(v.stock) || 0,
-                    stock_inicial: v.stock, // Guardar stock_inicial igual al stock al crear
+                    stock_inicial: Math.max(0, Math.floor(Number(v.stock) || 0)),
                     stock_inicial_decimal: Number(v.stock) || 0,
                     precio: v.precio,
                     sku: v.sku,
@@ -1809,7 +1809,7 @@ export default function AdminProductosPage() {
                     descripcion: editingProduct.descripcion,
                     precio: parseFloat(editingProduct.precio) || 0,
                     precio_compra: parseFloat(editingProduct.precio_compra) || 0,
-                    stock: parseInt(editingProduct.stock) || 0,
+                    stock: Math.max(0, Number(String(editingProduct.stock || 0).replace(',', '.')) || 0),
                     category_id: categoryIdValue,
                     vista_producto: normalizeProductView(editingProduct.vista_producto || currentProductView),
                     // Dejamos el codigo_barra para que no se re-genere si se guarda sin querer
@@ -1821,6 +1821,7 @@ export default function AdminProductosPage() {
             if (updateError) {
                 throw new Error(updateError.message);
             }
+            await sincronizarStockProducto(editingProduct.user_id, supabase);
 
             // 3. Eliminar imágenes quitadas (de la tabla producto_imagenes)
             const originales = imagenesProductos[editingProduct.user_id] || [];
