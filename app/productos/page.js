@@ -159,6 +159,9 @@ export default function CatalogoPage() {
             Array.isArray(producto?.unidades_alternativas) &&
             producto.unidades_alternativas.length > 0 &&
             Number(producto?.factor_conversion || 0) > 0;
+        if (hasUnitConversion && Number.isFinite(productStock)) {
+            return productStock;
+        }
         if (hasUnitConversion && varianteId === null && Number.isFinite(productStock)) {
             return productStock > 0 ? productStock : totalVariantStock;
         }
@@ -589,6 +592,9 @@ export default function CatalogoPage() {
                     Array.isArray(producto?.unidades_alternativas) &&
                     producto.unidades_alternativas.length > 0 &&
                     Number(producto?.factor_conversion || 0) > 0;
+                if (hasUnitConversion && Number.isFinite(productStock)) {
+                    return productStock;
+                }
 
                 if (variantes.length > 0) {
                         if (varianteId !== null && varianteId !== undefined) {
@@ -650,11 +656,18 @@ export default function CatalogoPage() {
 
     const openAddToCartModal = (producto) => {
         const variantes = getVariantes(producto);
-        const defaultVariante = variantes.find(function(v) { return getEffectiveVariantStock(v) > 0; }) || null;
+        const productStockBase = getProductStockBase(producto);
+        const hasUnitConversion =
+            Array.isArray(producto?.unidades_alternativas) &&
+            producto.unidades_alternativas.length > 0 &&
+            Number(producto?.factor_conversion || 0) > 0;
+        const defaultVariante =
+            variantes.find(function(v) { return getEffectiveVariantStock(v) > 0; }) ||
+            (variantes.length === 1 && (hasUnitConversion ? productStockBase > 0 : true) ? variantes[0] : null);
         const defaultVarianteId = defaultVariante ? (defaultVariante.variante_id ?? defaultVariante.id) : null;
         const defaultStockBase = defaultVariante
-            ? getEffectiveVariantStock(defaultVariante)
-            : getProductStockBase(producto);
+            ? (hasUnitConversion && variantes.length === 1 ? productStockBase : getEffectiveVariantStock(defaultVariante))
+            : productStockBase;
         const unidades = getAvailableUnits(producto, defaultStockBase);
 
         setAddToCartModal({
@@ -669,7 +682,8 @@ export default function CatalogoPage() {
     const confirmAddToCart = async () => {
         if (!addToCartModal?.producto) return;
         setModalWarning("");
-        const { producto, variantes, selectedVarianteId, cantidad, unidad } = addToCartModal;
+        const { producto, variantes, cantidad, unidad } = addToCartModal;
+        const selectedVarianteId = addToCartModal.selectedVarianteId || (variantes.length === 1 ? (variantes[0].variante_id ?? variantes[0].id) : null);
         let varianteSeleccionada = {
             variante_id: null,
             color: null,

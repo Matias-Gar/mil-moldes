@@ -28,6 +28,7 @@ export async function crearVentaCompleta(payload: {
   usuario_id?: string | null;
   usuario_email?: string | null;
   cashbox_id?: string;
+  sucursal_id?: string | null;
 }) {
   return supabase.rpc('crear_venta_completa', {
     p_venta: payload.venta,
@@ -36,6 +37,29 @@ export async function crearVentaCompleta(payload: {
     p_usuario_id: payload.usuario_id || null,
     p_usuario_email: payload.usuario_email || null,
     p_cashbox_id: payload.cashbox_id || 'main',
+    p_sucursal_id: payload.sucursal_id || null,
+  });
+}
+
+export async function aumentarStockCompleto(payload: {
+  producto_id: ProductoId;
+  variante_id?: ProductoId | null;
+  cantidad: number;
+  unidad?: string | null;
+  usuario_id?: string | null;
+  usuario_email?: string | null;
+  sucursal_id?: string | null;
+  observaciones?: string | null;
+}) {
+  return supabase.rpc('aumentar_stock_completo', {
+    p_producto_id: payload.producto_id,
+    p_variante_id: payload.variante_id || null,
+    p_cantidad: payload.cantidad,
+    p_unidad: payload.unidad || null,
+    p_usuario_id: payload.usuario_id || null,
+    p_usuario_email: payload.usuario_email || null,
+    p_sucursal_id: payload.sucursal_id || null,
+    p_observaciones: payload.observaciones || null,
   });
 }
 

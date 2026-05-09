@@ -141,7 +141,7 @@ async function enriquecerUnidades(productos: Producto[], sucursalId?: string) {
       factor_conversion: extra.factor_conversion,
       unidad: producto.unidad ?? extra.unidad_base,
       stock: hasUnitConversion
-        ? (productStock > 0 ? productStock : variantStock)
+        ? productStock
         : (variantStock > 0 || productStock <= 0 ? variantStock : productStock)
     };
   });

@@ -27,6 +27,21 @@ export async function sincronizarStockProducto(
   producto_id: string | number,
   supabase: unknown
 ): Promise<number> {
+  const { data: producto } = await (supabase as any)
+    .from("productos")
+    .select("stock, unidades_alternativas, factor_conversion")
+    .eq("user_id", producto_id)
+    .maybeSingle();
+
+  const productStock = Number((producto as any)?.stock ?? 0);
+  const hasConversion = Array.isArray((producto as any)?.unidades_alternativas)
+    && (producto as any).unidades_alternativas.length > 0
+    && Number((producto as any)?.factor_conversion || 0) > 0;
+
+  if (hasConversion) {
+    return Number.isFinite(productStock) ? Math.max(0, productStock) : 0;
+  }
+
   const { data } = await (supabase as any)
     .from("producto_variantes")
     .select("stock, stock_decimal")
@@ -38,14 +53,7 @@ export async function sincronizarStockProducto(
     : [];
 
   if (variantes.length === 0) {
-    const { data: producto } = await (supabase as any)
-      .from("productos")
-      .select("stock")
-      .eq("user_id", producto_id)
-      .maybeSingle();
-
-    const stockActual = Number((producto as any)?.stock ?? 0);
-    return Number.isFinite(stockActual) ? Math.max(0, stockActual) : 0;
+    return Number.isFinite(productStock) ? Math.max(0, productStock) : 0;
   }
 
   const stockTotal = variantes.reduce<number>(

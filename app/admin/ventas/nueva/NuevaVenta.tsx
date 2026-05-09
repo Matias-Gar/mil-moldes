@@ -7,7 +7,6 @@ import { usePromociones } from '../../../../lib/usePromociones';
 import { usePacks } from '../../../../lib/packs';
 import { calcularPrecioConPromocion } from '../../../../lib/promociones';
 import * as ventasService from '../../../../services/ventas.service';
-import { sincronizarStockProducto } from '../../../../lib/utils';
 import ClienteForm from '../../../../components/venta/ClienteForm';
 import BuscadorProductos from '../../../../components/venta/BuscadorProductos';
 import { calcularDescuentoPack } from '../../../../lib/packs';
@@ -63,6 +62,19 @@ type StockRequest = {
   solicitado: number;
 };
 
+type VentaItemPayload = {
+  tipo: 'producto';
+  producto_id: string | number;
+  variante_id?: string | number | null;
+  cantidad: number;
+  cantidad_base: number;
+  unidad: string;
+  precio_unitario: number;
+  costo_unitario: number;
+  color?: string | null;
+  descripcion: string;
+};
+
 type PackDB = {
   id: string | number;
   nombre?: string;
@@ -74,6 +86,10 @@ type PackDB = {
       user_id?: string | number;
       nombre?: string;
       precio?: number;
+      precio_compra?: number;
+      unidad_base?: string;
+      unidades_alternativas?: string[];
+      factor_conversion?: number;
       stock?: number;
       producto_variantes?: Array<{
         id?: string | number;
@@ -158,13 +174,6 @@ function getSaleBaseQuantity(
   }
   return normalizeQuantity(item.cantidad_base ?? item.cantidad ?? visible);
 }
-
-function toIntegerDetailQuantity(cantidadBase: number) {
-  const parsed = Number(cantidadBase);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 1;
-  return Math.max(1, Math.floor(parsed));
-}
-
 
 export default function NuevaVenta() {
   // hooks
@@ -427,8 +436,9 @@ export default function NuevaVenta() {
       } catch (e: unknown) {
         console.error('Error cargando pedido:', e);
         let errorMsg = '';
-        if (e && typeof e === 'object' && 'message' in e && typeof (e as any).message === 'string') {
-          errorMsg = (e as any).message;
+        if (e && typeof e === 'object' && 'message' in e) {
+          const maybeMessage = (e as { message?: unknown }).message;
+          errorMsg = typeof maybeMessage === 'string' ? maybeMessage : String(maybeMessage);
         } else {
           errorMsg = String(e);
         }
@@ -808,52 +818,10 @@ export default function NuevaVenta() {
     if (cliente.requiereFactura && (!cliente.nombre.trim() || !cliente.nit.trim())) { showToast('Completa los datos de facturacion (nombre y NIT)', 'error'); return; }
 
     setEfectivizando(true);
-    let ventaCreadaId: string | number | null = null;
-    const stockSnapshots: Array<
-      | { type: 'product'; productId: string | number; stock: number }
-      | { type: 'variant'; variantId: string | number; stock: number; productId?: string | number; productStock?: number }
-    > = [];
-
-    const rollbackVenta = async () => {
-      if (!ventaCreadaId) return;
-      const ventaId = ventaCreadaId;
-      const errors: string[] = [];
-
-      for (const snapshot of [...stockSnapshots].reverse()) {
-        if (snapshot.type === 'variant') {
-          const { error } = await ventasService.establecerStockVariante(snapshot.variantId, snapshot.stock);
-          if (error) errors.push(`stock variante ${snapshot.variantId}: ${error.message || String(error)}`);
-          if (snapshot.productId != null && snapshot.productStock != null) {
-            const { error: productError } = await ventasService.establecerStockProducto(snapshot.productId, snapshot.productStock);
-            if (productError) errors.push(`stock producto ${snapshot.productId}: ${productError.message || String(productError)}`);
-          }
-        } else {
-          const { error } = await ventasService.establecerStockProducto(snapshot.productId, snapshot.stock);
-          if (error) errors.push(`stock producto ${snapshot.productId}: ${error.message || String(error)}`);
-        }
-      }
-
-      const cleanupSteps = [
-        supabase.from('stock_movimientos').delete().ilike('observaciones', `%venta #${ventaId}%`),
-        supabase.from('ventas_pagos').delete().eq('venta_id', ventaId),
-        supabase.from('ventas_detalle').delete().eq('venta_id', ventaId),
-        supabase.from('ventas').delete().eq('id', ventaId),
-      ];
-      for (const step of cleanupSteps) {
-        const { error } = await step;
-        if (error) errors.push(error.message || String(error));
-      }
-
-      if (errors.length > 0) {
-        console.error('Rollback de venta incompleto:', errors);
-        showToast('La venta fallo y se intento revertir, pero revisa la base de datos.', 'error');
-      }
-    };
 
     try {
       // Obtener token y usuario solo una vez
       const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token;
       const userId = sessionData?.session?.user?.id || null;
       const userEmail = sessionData?.session?.user?.email || null;
       // 1. Agrupar productos y packs del carrito
@@ -878,7 +846,7 @@ export default function NuevaVenta() {
       if (packsIds.length > 0) {
         let packsQuery = supabase
           .from('packs')
-          .select('*, pack_productos ( cantidad, producto_id, variante_id, productos!pack_productos_producto_id_fkey ( user_id, nombre, precio, categoria, stock, producto_variantes ( id, color, precio, stock, stock_decimal, sku ) ) )')
+          .select('*, pack_productos ( cantidad, producto_id, variante_id, productos!pack_productos_producto_id_fkey ( user_id, nombre, precio, precio_compra, categoria, stock, unidad_base, unidades_alternativas, factor_conversion, producto_variantes ( id, color, precio, stock, stock_decimal, sku ) ) )')
           .in('id', packsIds);
         if (activeSucursalId) packsQuery = packsQuery.eq('sucursal_id', activeSucursalId);
         const { data: packsData, error: packsError } = await packsQuery;
@@ -914,7 +882,7 @@ export default function NuevaVenta() {
               addStockRequest(`var:${String(variante.id)}`, {
                 nombre: productoPack.nombre || 'Producto',
                 color: variante.color || null,
-                disponible: getVariantStock(variante),
+                disponible: getStockForVariantSale(productoPack as ProductoDB, variante),
                 solicitado: cantidadTotal
               });
             } else {
@@ -973,310 +941,84 @@ export default function NuevaVenta() {
         descuento: Number(totalDescuento) || 0
       };
 
-      // 5. Usuario actual
-      // (ya definido arriba)
-
-      // 6. Crear venta
-
-      // Guardar venta principal
-      const { data: venta, error: ventaError } = await ventasService.crearVenta({
-        cliente_nombre: cliente.nombre,
-        cliente_telefono: cliente.telefono,
-        cliente_email: cliente.email,
-        cliente_nit: cliente.nit,
-        requiere_factura: cliente.requiereFactura,
-        modo_pago: pagos.map(p=>p.metodo).join(' + '),
-        total: totalCobrar,
-        pago: sumaPagos,
-        cambio,
-        usuario_id: userId,
-        usuario_email: userEmail,
-        descuentos: totalDescuento,
-        costos_extra
-        ,
-        sucursal_id: activeSucursalId || undefined
-      });
-      if (ventaError || !venta) throw ventaError || new Error('no venta');
-      ventaCreadaId = venta.id as string | number;
-
-      // Guardar pagos en ventas_pagos
-      // Definir saleDate después de crear venta
-      const saleDate = venta?.fecha || new Date().toISOString();
-      // Insertar cada pago en ventas_pagos
-      for (const pagoObj of pagos) {
-        if (!pagoObj.metodo || pagoObj.monto <= 0) continue;
-        const pagoVenta = {
-          venta_id: venta.id,
-          monto: pagoObj.monto,
-          metodo_pago: pagoObj.metodo,
-          usuario_email: userEmail,
-          sucursal_id: activeSucursalId || undefined,
-        };
-        (Object.keys(pagoVenta) as Array<keyof typeof pagoVenta>).forEach(k => {
-          if (pagoVenta[k] === undefined) delete pagoVenta[k];
-        });
-        await ventasService.insertarVentaPago(pagoVenta);
-      }
-
-      // 7. Insertar detalles robustos
+      const ventaItems: VentaItemPayload[] = [];
       for (const p of carrito) {
         const cantidadVisible = Number(p.cantidad_display ?? p.cantidad ?? 1);
         const unidadVenta = String(p.unidad || p.unidad_base || 'unidad');
         const unidadBaseVenta = String(p.unidad_base || unidadVenta || 'unidad');
+
         if (p.tipo === 'pack') {
           const cantidadBase = Number(p.cantidad_base ?? p.cantidad ?? 1);
-          const cantidadDetalle = toIntegerDetailQuantity(cantidadBase);
-          // Buscar pack completo en DB
           const pack = packsDB.find(pk => String(pk.id) === String(p.pack_id));
           if (!pack) throw new Error('Pack no encontrado en base de datos');
-          // Insertar detalle de pack
-          const { error: detallePackError } = await ventasService.insertarVentaDetalle({
-            venta_id: venta.id,
-            producto_id: null, // always null for packs
-            cantidad: cantidadDetalle,
-            cantidad_base: cantidadBase,
-            unidad: unidadBaseVenta,
-            precio_unitario: pack.precio_pack,
-            costo_unitario: 0,
-            color: null,
-            descripcion: `📦 Pack: ${pack.nombre}`,
-            tipo: 'pack',
-            pack_id: pack.id,
-            created_at: new Date().toISOString(),
-            sucursal_id: activeSucursalId || undefined,
-            usuario_email: userEmail
-          });
-          if (detallePackError) throw detallePackError;
-          // Descontar stock de cada producto del pack
-          for (const item of pack.pack_productos ?? []) {
-            const cantidadTotal = normalizeQuantity(item.cantidad) * cantidadBase;
+          (pack.pack_productos ?? []).forEach((item) => {
             const productoPack = item.productos;
             if (!productoPack?.user_id) throw new Error('Producto de pack no encontrado en base de datos');
-            // Si el producto tiene variante, descontar stock de variante
-            if (item.variante_id) {
-              const variante = productoPack.producto_variantes?.find(v => String(v.id) === String(item.variante_id));
-              if (variante) {
-                // Aquí podrías llamar a un servicio para descontar stock de variante si aplica
-                // await descontarStockVariante(variante.id, cantidadTotal);
-                // Después de descontar stock de la variante, actualizar el stock total del producto
-                // 1. Descontar stock de la variante (debería implementarse en ventasService)
-                // 2. Recalcular y actualizar el stock total del producto
-                if (variante.id == null) throw new Error(`Variante de pack sin ID para ${productoPack.nombre || 'producto'}`);
-                const stockEsperado = getVariantStock(variante) - cantidadTotal;
-                stockSnapshots.push({
-                  type: 'variant',
-                  variantId: variante.id,
-                  stock: getVariantStock(variante),
-                  productId: productoPack.user_id,
-                  productStock: getProductStock(productoPack),
-                });
-                const { error: stockPackVarianteError } = await ventasService.establecerStockVariante(variante.id, stockEsperado);
-                if (stockPackVarianteError) throw stockPackVarianteError;
-                const { error: movPackVarianteError } = await supabase.from('stock_movimientos').insert([{
-                  producto_id: productoPack.user_id,
-                  variante_id: variante.id,
-                  tipo: 'venta',
-                  cantidad: cantidadTotal,
-                  unidad: 'unidad',
-                  cantidad_base: cantidadTotal,
-                  usuario_id: userId,
-                  usuario_email: userEmail,
-                  sucursal_id: activeSucursalId || undefined,
-                  observaciones: `Salida automatica por venta #${venta.id}`
-                }]);
-                if (movPackVarianteError) throw movPackVarianteError;
-                await actualizarStockTotalProducto(productoPack.user_id);
-              }
-            } else {
-              const stockEsperado = getProductStock(productoPack) - cantidadTotal;
-              stockSnapshots.push({
-                type: 'product',
-                productId: productoPack.user_id,
-                stock: getProductStock(productoPack),
-              });
-              const { error: stockPackError } = await ventasService.establecerStockProducto(productoPack.user_id, stockEsperado);
-              if (stockPackError) throw stockPackError;
-              const { error: movPackError } = await supabase.from('stock_movimientos').insert([{
-                producto_id: productoPack.user_id,
-                variante_id: null,
-                tipo: 'venta',
-                cantidad: cantidadTotal,
-                unidad: 'unidad',
-                cantidad_base: cantidadTotal,
-                usuario_id: userId,
-                usuario_email: userEmail,
-                sucursal_id: activeSucursalId || undefined,
-                observaciones: `Salida automatica por venta #${venta.id}`
-              }]);
-              if (movPackError) throw movPackError;
-              // Actualizar el stock total del producto
-              await actualizarStockTotalProducto(productoPack.user_id);
-            }
-          }
-        } else {
-          // Buscar producto completo en DB
-          // Ignore items with user_id: null (should only be for packs)
-          if (p.user_id == null) continue;
-          const productoCompleto = productosDB.find(prod => String(prod.user_id) === String(p.user_id));
-          if (!productoCompleto) throw new Error('Producto no encontrado en base de datos');
-          const cantidadBase = getSaleBaseQuantity(p, productoCompleto);
-          const cantidadDetalle = toIntegerDetailQuantity(cantidadBase);
-          let variante = null;
-          if (p.variante_id) {
-            variante = (productoCompleto.producto_variantes || []).find((v: { id?: string | number }) => String(v.id) === String(p.variante_id));
-          }
-          const precioUnitario = Number(p.precio ?? variante?.precio ?? productoCompleto.precio ?? 0);
-          const costoUnitario = productoCompleto.precio_compra || 0;
-          const descripcionItem = `${productoCompleto.nombre}${variante?.color ? ` ${variante.color}` : p.color ? ` ${p.color}` : ''}${unidadVenta !== unidadBaseVenta ? ` (${cantidadVisible} ${unidadVenta} = ${formatStockQuantity(cantidadBase)} ${unidadBaseVenta})` : ''}`.trim();
-          let stockSnapshotRegistrado = false;
-          if (variante?.id && shouldUseProductStockForVariant(productoCompleto)) {
-            stockSnapshots.push({
-              type: 'variant',
-              variantId: variante.id,
-              stock: getStockForVariantSale(productoCompleto, variante),
-              productId: productoCompleto.user_id,
-              productStock: getProductStock(productoCompleto),
+            const componenteCantidad = normalizeQuantity(item.cantidad) * cantidadBase;
+            const componenteVariante = item.variante_id
+              ? productoPack.producto_variantes?.find((v) => String(v.id) === String(item.variante_id))
+              : null;
+            ventaItems.push({
+              tipo: 'producto',
+              producto_id: productoPack.user_id,
+              variante_id: item.variante_id || null,
+              cantidad: componenteCantidad,
+              cantidad_base: componenteCantidad,
+              unidad: productoPack.unidad_base || 'unidad',
+              precio_unitario: Number(componenteVariante?.precio ?? productoPack.precio ?? 0),
+              costo_unitario: Number(productoPack.precio_compra || 0),
+              color: componenteVariante?.color || null,
+              descripcion: `Pack ${pack.nombre}: ${productoPack.nombre || 'Producto'}${componenteVariante?.color ? ` ${componenteVariante.color}` : ''}`.trim(),
             });
-            stockSnapshotRegistrado = true;
-            const stockLegacyDisponible = Number(variante.stock || 0);
-            const stockLegacyNecesario = Math.ceil(Math.max(1, cantidadVisible));
-            if (stockLegacyDisponible < stockLegacyNecesario) {
-              const { error: legacyStockError } = await ventasService.establecerStockLegacyVariante(variante.id, stockLegacyNecesario);
-              if (legacyStockError) throw legacyStockError;
-            }
-          }
-          const { error: detalleProductoError } = await ventasService.insertarVentaDetalle({
-            venta_id: venta.id,
-            producto_id: productoCompleto.user_id,
-            cantidad: cantidadVisible,
-            cantidad_base: cantidadBase,
-            unidad: unidadVenta,
-            precio_unitario: precioUnitario,
-            costo_unitario: costoUnitario,
-            variante_id: variante?.id || null,
-            color: variante?.color || p.color || null,
-            descripcion: descripcionItem,
-            tipo: 'producto',
-            created_at: new Date().toISOString(),
-            sucursal_id: activeSucursalId || undefined,
-            usuario_email: userEmail
           });
-          if (detalleProductoError) throw detalleProductoError;
-          if (variante?.id) {
-            const stockEsperado = getStockForVariantSale(productoCompleto, variante) - cantidadBase;
-            if (!stockSnapshotRegistrado) {
-              stockSnapshots.push({
-                type: 'variant',
-                variantId: variante.id,
-                stock: getStockForVariantSale(productoCompleto, variante),
-                productId: productoCompleto.user_id,
-                productStock: getProductStock(productoCompleto),
-              });
-            }
-            const { error: stockVarianteError } = await ventasService.establecerStockVariante(variante.id, stockEsperado);
-            if (stockVarianteError) throw stockVarianteError;
-            const { error: movVarianteError } = await supabase.from('stock_movimientos').insert([{
-              producto_id: productoCompleto.user_id,
-              variante_id: variante.id,
-              tipo: 'venta',
-              cantidad: cantidadVisible,
-              unidad: unidadVenta,
-              cantidad_base: cantidadBase,
-              usuario_id: userId,
-              usuario_email: userEmail,
-              sucursal_id: activeSucursalId || undefined,
-              observaciones: `Salida automatica por venta #${venta.id}`
-            }]);
-            if (movVarianteError) throw movVarianteError;
-          } else {
-            const stockEsperado = getProductStock(productoCompleto) - cantidadBase;
-            stockSnapshots.push({
-              type: 'product',
-              productId: productoCompleto.user_id,
-              stock: getProductStock(productoCompleto),
-            });
-            const { error: stockProductoError } = await ventasService.establecerStockProducto(productoCompleto.user_id, stockEsperado);
-            if (stockProductoError) throw stockProductoError;
-            const { error: movProductoError } = await supabase.from('stock_movimientos').insert([{
-              producto_id: productoCompleto.user_id,
-              variante_id: null,
-              tipo: 'venta',
-              cantidad: cantidadVisible,
-              unidad: unidadVenta,
-              cantidad_base: cantidadBase,
-              usuario_id: userId,
-              usuario_email: userEmail,
-              sucursal_id: activeSucursalId || undefined,
-              observaciones: `Salida automatica por venta #${venta.id}`
-            }]);
-            if (movProductoError) throw movProductoError;
-          }
-          // Actualizar el stock total del producto
-          await actualizarStockTotalProducto(productoCompleto.user_id);
+          continue;
         }
+
+        if (p.user_id == null) continue;
+        const productoCompleto = productosDB.find(prod => String(prod.user_id) === String(p.user_id));
+        if (!productoCompleto) throw new Error('Producto no encontrado en base de datos');
+        const cantidadBase = getSaleBaseQuantity(p, productoCompleto);
+        const variante = p.variante_id
+          ? (productoCompleto.producto_variantes || []).find((v: { id?: string | number }) => String(v.id) === String(p.variante_id))
+          : null;
+        ventaItems.push({
+          tipo: 'producto',
+          producto_id: productoCompleto.user_id,
+          variante_id: variante?.id || null,
+          cantidad: cantidadVisible,
+          cantidad_base: cantidadBase,
+          unidad: unidadVenta,
+          precio_unitario: Number(p.precio ?? variante?.precio ?? productoCompleto.precio ?? 0),
+          costo_unitario: Number(productoCompleto.precio_compra || 0),
+          color: variante?.color || p.color || null,
+          descripcion: `${productoCompleto.nombre}${variante?.color ? ` ${variante.color}` : p.color ? ` ${p.color}` : ''}${unidadVenta !== unidadBaseVenta ? ` (${cantidadVisible} ${unidadVenta} = ${formatStockQuantity(cantidadBase)} ${unidadBaseVenta})` : ''}`.trim(),
+        });
       }
 
-      // --- Función para recalcular y actualizar el stock total del producto ---
-      async function actualizarStockTotalProducto(productoId: string | number) {
-        await sincronizarStockProducto(productoId, supabase);
-      }
-
-
-      // Sincroniza automáticamente ingresos de ventas con flujo de caja, uno por cada método de pago
-      // Usa sessionData, token y saleDate ya definidos arriba
-      for (const pagoObj of pagos) {
-        if (!pagoObj.metodo || pagoObj.monto <= 0) continue;
-        let payment_method = 'other';
-        if (pagoObj.metodo === 'efectivo') payment_method = 'cash';
-        else if (pagoObj.metodo === 'qr') payment_method = 'qr';
-        else if (pagoObj.metodo === 'tarjeta') payment_method = 'card';
-        else if (pagoObj.metodo === 'transferencia') payment_method = 'transfer';
-        if (token) {
-          const response = await fetch('/api/cash/movements', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              date: saleDate.slice(0, 10),
-              type: 'income',
-              payment_method,
-              amount: pagoObj.monto,
-              description: `Ingreso por venta #${venta?.id} (${pagoObj.metodo})`,
-              cashbox_id: 'main',
-              sucursal_id: activeSucursalId || undefined,
-            }),
-          });
-          const payload = await response.json().catch(() => null);
-          if (!response.ok || !payload?.success) {
-            showToast(`Error al registrar en caja: ${payload?.error || 'Error desconocido'}`, 'error');
-            console.error('Error cash_movements:', payload?.error || response.statusText);
-          }
-        }
-      }
-
-      // snapshot ticket y imprimir
-      const _ticket = {
-        venta,
-        items: carrito.map((it: Producto) => ({ ...it })),
-        fecha: new Date().toLocaleString(),
-        cliente_nombre: cliente.nombre,
-        cliente_nit: cliente.nit,
-        modo_pago: pagos.map(p=>`${p.metodo}: Bs ${p.monto}`).join(' + '),
-        requiere_factura: cliente.requiereFactura,
-        subtotal,
-        descuento: totalDescuento,
-        total: totalCobrar,
-        envio,
-        comision,
-        publicidad,
-        rebajas,
-        impuestos: Number(impuestosCalculados.toFixed(2)),
-        cobrar_impuestos: cobrarImpuestos,
-        pago: sumaPagos,
-        cambio
-      };
+      const { data: ventaRpc, error: ventaRpcError } = await ventasService.crearVentaCompleta({
+        venta: {
+          cliente_nombre: cliente.nombre,
+          cliente_telefono: cliente.telefono,
+          cliente_email: cliente.email,
+          cliente_nit: cliente.nit,
+          requiere_factura: cliente.requiereFactura,
+          modo_pago: pagos.map(p=>p.metodo).join(' + '),
+          total: totalCobrar,
+          pago: sumaPagos,
+          cambio,
+          descuentos: totalDescuento,
+          costos_extra,
+        },
+        items: ventaItems,
+        pagos: pagos
+          .filter((pagoObj) => pagoObj.metodo && pagoObj.monto > 0)
+          .map((pagoObj) => ({ metodo_pago: pagoObj.metodo, monto: pagoObj.monto })),
+        usuario_id: userId,
+        usuario_email: userEmail,
+        cashbox_id: 'main',
+        sucursal_id: activeSucursalId || null,
+      });
+      if (ventaRpcError || !ventaRpc) throw ventaRpcError || new Error('no venta');
       printerRef.current?.printComprobante();
       if (pedidoPendienteId) {
         let pedidoQuery = supabase
@@ -1292,16 +1034,16 @@ export default function NuevaVenta() {
           setPedidoPendienteId(null);
         }
       }
-      // limpieza de carrito y cliente después de impresión
       setCarrito([]);
       setPagos([{ metodo: '', monto: 0 }]);
-      // reset costos
       setEnvio(0); setComision(0); setPublicidad(0); setRebajas(0); setCobrarImpuestos(false);
       cambiarCampo('nombre',''); cambiarCampo('carnet',''); cambiarCampo('telefono',''); cambiarCampo('email',''); cambiarCampo('nit',''); cambiarCampo('guardado',false); cambiarCampo('requiereFactura',false);
       setEfectivizando(false);
       showToast('Venta efectivizada y stock actualizado');
+      return;
+
+
     } catch (err) {
-      await rollbackVenta();
       const errorContext = err && typeof err === 'object'
         ? ['message', 'details', 'hint']
             .map((key) => {

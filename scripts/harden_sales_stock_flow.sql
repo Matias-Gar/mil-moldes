@@ -146,11 +146,13 @@ create or replace function public.crear_venta_completa(
   p_pagos jsonb default '[]'::jsonb,
   p_usuario_id uuid default null,
   p_usuario_email text default null,
-  p_cashbox_id text default 'main'
+  p_cashbox_id text default 'main',
+  p_sucursal_id uuid default null
 )
 returns jsonb
 language plpgsql
 security definer
+set search_path = public
 as $$
 declare
   v_venta_id bigint;
@@ -176,6 +178,8 @@ declare
   v_descripcion text;
   v_metodo text;
   v_monto numeric;
+  v_component jsonb;
+  v_pack_detalle_id bigint;
 begin
   if jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
     raise exception 'La venta no tiene items';
@@ -198,6 +202,7 @@ begin
     estado,
     finalized_at,
     cashbox_id
+    ,sucursal_id
   )
   values (
     coalesce(p_venta->>'cliente_nombre', ''),
@@ -215,7 +220,8 @@ begin
     coalesce(p_venta->'costos_extra', '{}'::jsonb),
     'efectivizada',
     now(),
-    coalesce(p_cashbox_id, 'main')
+    coalesce(p_cashbox_id, 'main'),
+    p_sucursal_id
   )
   returning id into v_venta_id;
 
@@ -242,7 +248,9 @@ begin
       coalesce(cardinality(p.unidades_alternativas), 0) as alternativas_count
     into v_producto
     from public.productos p
-    where p.user_id = v_producto_id;
+    where p.user_id = v_producto_id
+      and (p_sucursal_id is null or p.sucursal_id = p_sucursal_id)
+    for update;
 
     if not found then
       raise exception 'Producto no encontrado (%)', v_producto_id;
@@ -265,7 +273,10 @@ begin
       select pv.id, pv.color, coalesce(nullif(pv.stock_decimal, 0), pv.stock, 0)::numeric as stock
       into v_variante
       from public.producto_variantes pv
-      where pv.id = v_variante_id;
+      where pv.id = v_variante_id
+        and pv.producto_id = v_producto_id
+        and (p_sucursal_id is null or pv.sucursal_id = p_sucursal_id)
+      for update;
       if not found then
         raise exception 'Variante no encontrada (%)', v_variante_id;
       end if;
@@ -295,7 +306,8 @@ begin
       descripcion,
       tipo,
       created_at,
-      usuario_email
+      usuario_email,
+      sucursal_id
     )
     values (
       v_venta_id,
@@ -310,7 +322,8 @@ begin
       v_descripcion,
       'producto',
       now(),
-      p_usuario_email
+      p_usuario_email,
+      p_sucursal_id
     )
     returning id into v_detalle_id;
 
@@ -338,6 +351,7 @@ begin
         select coalesce(sum(coalesce(nullif(pv.stock_decimal, 0), pv.stock, 0)), 0)
         from public.producto_variantes pv
         where pv.producto_id = v_producto_id
+          and (p_sucursal_id is null or pv.sucursal_id = p_sucursal_id)
           and coalesce(pv.activo, true) = true
       )
       where user_id = v_producto_id;
@@ -362,6 +376,7 @@ begin
       venta_id,
       detalle_id,
       motivo,
+      sucursal_id,
       metadata
     )
     values (
@@ -379,6 +394,7 @@ begin
       v_venta_id,
       v_detalle_id,
       'venta_confirmada',
+      p_sucursal_id,
       jsonb_build_object('color', v_color, 'has_conversion', v_has_conversion)
     );
   end loop;
@@ -388,8 +404,8 @@ begin
     v_metodo := coalesce(v_pago->>'metodo_pago', v_pago->>'metodo', '');
     v_monto := coalesce((v_pago->>'monto')::numeric, 0);
     if v_metodo <> '' and v_monto > 0 then
-      insert into public.ventas_pagos (venta_id, monto, metodo_pago, fecha, usuario_email)
-      values (v_venta_id, v_monto, v_metodo, now(), p_usuario_email);
+      insert into public.ventas_pagos (venta_id, monto, metodo_pago, fecha, usuario_email, sucursal_id)
+      values (v_venta_id, v_monto, v_metodo, now(), p_usuario_email, p_sucursal_id);
 
       insert into public.cash_movements (
         user_id,
@@ -399,7 +415,8 @@ begin
         payment_method,
         amount,
         description,
-        created_at
+        created_at,
+        sucursal_id
       )
       values (
         p_usuario_id,
@@ -415,7 +432,8 @@ begin
         end,
         v_monto,
         'Ingreso automatico por venta #' || v_venta_id,
-        now()
+        now(),
+        p_sucursal_id
       );
     end if;
   end loop;
@@ -425,6 +443,174 @@ exception
   when others then
     -- Postgres rolls back everything in this function automatically.
     raise;
+end;
+$$;
+
+-- 7) Transactional stock increase.
+create or replace function public.aumentar_stock_completo(
+  p_producto_id bigint,
+  p_variante_id bigint default null,
+  p_cantidad numeric default 0,
+  p_unidad text default null,
+  p_usuario_id uuid default null,
+  p_usuario_email text default null,
+  p_sucursal_id uuid default null,
+  p_observaciones text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_producto record;
+  v_variante record;
+  v_unidad text;
+  v_unidad_base text;
+  v_factor numeric;
+  v_has_conversion boolean;
+  v_base_increase numeric;
+  v_stock_antes numeric;
+  v_stock_despues numeric;
+  v_producto_stock numeric;
+begin
+  if p_producto_id is null or coalesce(p_cantidad, 0) <= 0 then
+    raise exception 'Cantidad invalida para aumento de stock';
+  end if;
+
+  select
+    p.user_id,
+    p.nombre,
+    coalesce(p.stock, 0)::numeric as stock,
+    coalesce(nullif(p.unidad_base, ''), 'unidad') as unidad_base,
+    coalesce(p.factor_conversion, 0)::numeric as factor_conversion,
+    coalesce(cardinality(p.unidades_alternativas), 0) as alternativas_count,
+    p.sucursal_id
+  into v_producto
+  from public.productos p
+  where p.user_id = p_producto_id
+    and (p_sucursal_id is null or p.sucursal_id = p_sucursal_id)
+  for update;
+
+  if not found then
+    raise exception 'Producto no encontrado (%)', p_producto_id;
+  end if;
+
+  v_unidad_base := v_producto.unidad_base;
+  v_unidad := coalesce(nullif(p_unidad, ''), v_unidad_base);
+  v_factor := v_producto.factor_conversion;
+  v_has_conversion := v_factor > 0 and v_producto.alternativas_count > 0;
+  v_base_increase := case
+    when v_has_conversion and v_unidad <> v_unidad_base then p_cantidad / v_factor
+    else p_cantidad
+  end;
+
+  if p_variante_id is not null then
+    select pv.id, pv.color, coalesce(nullif(pv.stock_decimal, 0), pv.stock, 0)::numeric as stock
+    into v_variante
+    from public.producto_variantes pv
+    where pv.id = p_variante_id
+      and pv.producto_id = p_producto_id
+      and (p_sucursal_id is null or pv.sucursal_id = p_sucursal_id)
+    for update;
+
+    if not found then
+      raise exception 'Variante no encontrada (%)', p_variante_id;
+    end if;
+  end if;
+
+  if v_has_conversion then
+    v_stock_antes := v_producto.stock;
+    v_stock_despues := v_stock_antes + v_base_increase;
+
+    update public.productos
+    set stock = v_stock_despues
+    where user_id = p_producto_id
+      and (p_sucursal_id is null or sucursal_id = p_sucursal_id);
+
+    if p_variante_id is not null then
+      update public.producto_variantes
+      set stock_decimal = v_stock_despues,
+          stock = floor(v_stock_despues)
+      where id = p_variante_id
+        and (p_sucursal_id is null or sucursal_id = p_sucursal_id);
+    end if;
+
+    v_producto_stock := v_stock_despues;
+  elsif p_variante_id is not null then
+    v_stock_antes := v_variante.stock;
+    v_stock_despues := v_stock_antes + v_base_increase;
+
+    update public.producto_variantes
+    set stock_decimal = v_stock_despues,
+        stock = floor(v_stock_despues)
+    where id = p_variante_id
+      and (p_sucursal_id is null or sucursal_id = p_sucursal_id);
+
+    update public.productos
+    set stock = (
+      select coalesce(sum(coalesce(nullif(pv.stock_decimal, 0), pv.stock, 0)), 0)
+      from public.producto_variantes pv
+      where pv.producto_id = p_producto_id
+        and (p_sucursal_id is null or pv.sucursal_id = p_sucursal_id)
+        and coalesce(pv.activo, true) = true
+    )
+    where user_id = p_producto_id
+      and (p_sucursal_id is null or sucursal_id = p_sucursal_id)
+    returning stock into v_producto_stock;
+  else
+    v_stock_antes := v_producto.stock;
+    v_stock_despues := v_stock_antes + v_base_increase;
+    update public.productos
+    set stock = v_stock_despues
+    where user_id = p_producto_id
+      and (p_sucursal_id is null or sucursal_id = p_sucursal_id)
+    returning stock into v_producto_stock;
+  end if;
+
+  insert into public.stock_movimientos (
+    producto_id,
+    variante_id,
+    tipo,
+    cantidad,
+    unidad,
+    cantidad_base,
+    usuario_id,
+    usuario_email,
+    sucursal_id,
+    observaciones,
+    stock_antes,
+    stock_despues,
+    motivo,
+    metadata
+  )
+  values (
+    p_producto_id,
+    p_variante_id,
+    'aumento',
+    p_cantidad,
+    v_unidad,
+    v_base_increase,
+    p_usuario_id,
+    p_usuario_email,
+    p_sucursal_id,
+    coalesce(p_observaciones, 'Aumento de stock'),
+    v_stock_antes,
+    v_stock_despues,
+    'aumento_stock',
+    jsonb_build_object('has_conversion', v_has_conversion)
+  );
+
+  return jsonb_build_object(
+    'producto_id', p_producto_id,
+    'variante_id', p_variante_id,
+    'cantidad', p_cantidad,
+    'unidad', v_unidad,
+    'cantidad_base', v_base_increase,
+    'stock_antes', v_stock_antes,
+    'stock_despues', v_stock_despues,
+    'producto_stock', v_producto_stock
+  );
 end;
 $$;
 

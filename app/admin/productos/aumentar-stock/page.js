@@ -6,10 +6,9 @@ import { supabase } from "@/lib/SupabaseClient";
 import Toast, { showToast } from '../../../../components/ui/Toast';
 
 
-import { registrarMovimientoStock } from "@/lib/stockMovimientos";
 import { registrarHistorialProducto } from "@/lib/productosHistorial";
-import { sincronizarStockProducto } from "@/lib/utils";
 import { useSucursalActiva } from "@/components/admin/SucursalContext";
+import * as ventasService from "@/services/ventas.service";
 
 export default function AumentarStockPage() {
   const { activeSucursalId } = useSucursalActiva();
@@ -386,6 +385,8 @@ export default function AumentarStockPage() {
 
   function getBaseStock(prod, variants = null) {
     const productStock = Math.max(0, Number(prod?.stock || 0));
+    const { hasConversion } = getUnitInfo(prod);
+    if (hasConversion) return productStock;
     const list = Array.isArray(variants) ? variants : [];
     if (list.length > 0) {
       const variantStock = list.reduce((sum, v) => sum + getEffectiveVariantStock(v), 0);
@@ -441,21 +442,22 @@ export default function AumentarStockPage() {
       return;
     }
 
-    const currentStock = Number(prod.stock || 0);
-    const newStock = currentStock + increaseBy;
-
     try {
       setSavingKey(key);
+      const user = (await supabase.auth.getUser())?.data?.user;
 
-      const { error } = await supabase
-        .from("productos")
-        .update({ stock: newStock })
-        .eq("user_id", pid);
-
+      const { data, error } = await ventasService.aumentarStockCompleto({
+        producto_id: pid,
+        cantidad: Number(displayIncrease),
+        unidad: selectedUnit,
+        usuario_id: user?.id || null,
+        usuario_email: user?.email || '',
+        sucursal_id: activeSucursalId || null,
+        observaciones: `Aumento de stock desde panel (${formatQuantity(displayIncrease)} ${selectedUnit})`
+      });
       if (error) throw error;
 
-      // Sincroniza el stock del producto como suma de variantes
-      const totalStock = await sincronizarStockProducto(pid, supabase);
+      const totalStock = Number(data?.stock_despues ?? (Number(prod.stock || 0) + increaseBy));
 
       setProductos((prev) =>
         prev.map((p) => (p.user_id === pid ? { ...p, stock: totalStock } : p))
@@ -464,25 +466,12 @@ export default function AumentarStockPage() {
 
       // Registrar movimiento e historial de aumento de stock
       try {
-        const user = (await supabase.auth.getUser())?.data?.user;
         // Obtener datos anteriores
         const { data: actual } = await supabase
           .from("productos")
           .select("*")
           .eq("user_id", pid)
           .single();
-        const movimientoPayload = {
-          producto_id: Number(pid),
-          tipo: 'aumento',
-          cantidad: Number(displayIncrease),
-          cantidad_base: Number(increaseBy),
-          unidad: selectedUnit,
-          usuario_id: user?.id || null,
-          usuario_email: user?.email || '',
-          sucursal_id: activeSucursalId || null,
-          observaciones: `Aumento de stock desde panel (${formatQuantity(displayIncrease)} ${selectedUnit})`
-        };
-        await registrarMovimientoStock(movimientoPayload);
         await registrarHistorialProducto({
           producto_id: pid,
           accion: "UPDATE",
@@ -527,48 +516,32 @@ export default function AumentarStockPage() {
       return;
     }
 
-    const currentVariantStock = getEffectiveVariantStock(variante);
-    const nextVariantStock = currentVariantStock + increaseBy;
-
     try {
       setSavingKey(key);
+      const user = (await supabase.auth.getUser())?.data?.user;
 
-      const { error: variantError } = await supabase
-        .from("producto_variantes")
-        .update({
-          stock_decimal: nextVariantStock,
-          stock: Math.floor(nextVariantStock),
-        })
-        .eq("id", variantId);
-
-      if (variantError) throw variantError;
-
-
-      // Sincroniza el stock del producto como suma de variantes
-      const totalStock = await sincronizarStockProducto(pid, supabase);
+      const { data, error } = await ventasService.aumentarStockCompleto({
+        producto_id: pid,
+        variante_id: variantId,
+        cantidad: Number(displayIncrease),
+        unidad: selectedUnit,
+        usuario_id: user?.id || null,
+        usuario_email: user?.email || '',
+        sucursal_id: activeSucursalId || null,
+        observaciones: `Aumento de stock en variante (${variante.color || 'Unico'}) desde panel (${formatQuantity(displayIncrease)} ${selectedUnit})`
+      });
+      if (error) throw error;
+      const nextVariantStock = Number(data?.stock_despues ?? (getEffectiveVariantStock(variante) + increaseBy));
+      const totalStock = Number(data?.producto_stock ?? data?.stock_despues ?? nextVariantStock);
 
       // Registrar movimiento e historial de aumento de stock para variante
       try {
-        const user = (await supabase.auth.getUser())?.data?.user;
         // Obtener datos anteriores
         const { data: actual } = await supabase
           .from("productos")
           .select("*")
           .eq("user_id", pid)
           .single();
-        const movimientoPayload = {
-          producto_id: Number(pid),
-          variante_id: Number(variantId),
-          tipo: 'aumento',
-          cantidad: Number(displayIncrease),
-          cantidad_base: Number(increaseBy),
-          unidad: selectedUnit,
-          usuario_id: user?.id || null,
-          usuario_email: user?.email || '',
-          sucursal_id: activeSucursalId || null,
-          observaciones: `Aumento de stock en variante (${variante.color || 'Unico'}) desde panel (${formatQuantity(displayIncrease)} ${selectedUnit})`
-        };
-        await registrarMovimientoStock(movimientoPayload);
         await registrarHistorialProducto({
           producto_id: pid,
           accion: "UPDATE",
