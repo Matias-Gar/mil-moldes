@@ -2220,10 +2220,11 @@ export default function AdminProductosPage() {
                                                     <button
                                                         type="button"
                                                         onClick={() => {
-                                                            if (variant.codigo_barra) {
+                                                            const variantCode = variant.sku || variant.codigo_barra || '';
+                                                            if (variantCode) {
                                                                 const event = new CustomEvent('printVariantBarcode', {
                                                                     detail: {
-                                                                        codigoBarras: variant.codigo_barra,
+                                                                        codigoBarras: variantCode,
                                                                         nombre: `${newProduct.nombre || 'Producto'} (${variant.color})`,
                                                                         copies: Math.max(1, Math.min(200, Number(variant.stock) || 1)),
                                                                         printMode: 'qz-html',
@@ -2234,7 +2235,7 @@ export default function AdminProductosPage() {
                                                             }
                                                         }}
                                                         className="inline-flex h-8 w-8 items-center justify-center rounded bg-green-600 text-white shadow-sm transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
-                                                        disabled={!variant.codigo_barra}
+                                                        disabled={!(variant.sku || variant.codigo_barra)}
                                                         title="Imprimir etiqueta"
                                                     >
                                                         <svg

@@ -186,14 +186,14 @@ export default function TransferenciaSucursalPage() {
       const chunk = ids.slice(i, i + CHUNK_SIZE);
       const variantsQuery = supabase
         .from("producto_variantes")
-        .select("id, producto_id, color, stock, stock_decimal, activo, codigo_barra, sku")
+        .select("id, producto_id, color, stock, stock_decimal, activo, sku")
         .in("producto_id", chunk)
         .eq("sucursal_id", activeSucursalId)
         .order("color", { ascending: true });
 
       let { data, error } = await variantsQuery;
       if (error) {
-        if (isMissingSchemaError(error, ["codigo_barra", "activo", "stock_decimal"])) {
+        if (isMissingSchemaError(error, ["activo", "stock_decimal"])) {
           let fallbackQuery = supabase
             .from("producto_variantes")
             .select("id, producto_id, color, stock, sku")
@@ -208,7 +208,6 @@ export default function TransferenciaSucursalPage() {
           data = (fallback.data || []).map((row) => ({
             ...row,
             activo: true,
-            codigo_barra: null,
             stock_decimal: null,
           }));
           error = fallback.error;
@@ -305,8 +304,8 @@ export default function TransferenciaSucursalPage() {
         label: product.nombre,
         detail: variant.color || "Unico",
         stock: getEffectiveVariantStock(variant),
-        code: variant.codigo_barra || variant.sku || product.codigo_barra || "",
-        searchText: [product.nombre, product.codigo_barra, variant.codigo_barra, variant.sku, variant.color, getCategoryName(product)].join(" "),
+        code: variant.sku || product.codigo_barra || "",
+        searchText: [product.nombre, product.codigo_barra, variant.sku, variant.color, getCategoryName(product)].join(" "),
       }));
     });
   }, [productos, variantesByProducto]);

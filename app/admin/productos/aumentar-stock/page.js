@@ -224,6 +224,7 @@ export default function AumentarStockPage() {
         nombre,
         stock,
         codigo_barra,
+        imagen_url,
         category_id,
         unidad_base,
         unidades_alternativas,
@@ -261,7 +262,7 @@ export default function AumentarStockPage() {
         let vars = [];
         let withActiveQuery = supabase
           .from("producto_variantes")
-          .select("id, producto_id, color, stock, stock_decimal, activo, codigo_barra, sku")
+          .select("id, producto_id, color, stock, stock_decimal, activo, sku")
           .in("producto_id", chunk)
           .eq("activo", true)
           .order("color", { ascending: true });
@@ -270,7 +271,7 @@ export default function AumentarStockPage() {
         if (withActive.error) {
           let fallbackWithoutActiveQuery = supabase
             .from("producto_variantes")
-            .select("id, producto_id, color, stock, stock_decimal, codigo_barra, sku")
+            .select("id, producto_id, color, stock, stock_decimal, sku")
             .in("producto_id", chunk)
             .order("color", { ascending: true });
           if (activeSucursalId) fallbackWithoutActiveQuery = fallbackWithoutActiveQuery.eq("sucursal_id", activeSucursalId);
@@ -289,7 +290,6 @@ export default function AumentarStockPage() {
             } else {
               vars = (minimalFallback.data || []).map((row) => ({
                 ...row,
-                codigo_barra: null,
                 sku: null,
               }));
             }
@@ -317,6 +317,29 @@ export default function AumentarStockPage() {
       }));
     } else {
       setVariantesByProducto({});
+    }
+
+    if (productIds.length > 0) {
+      let imgsQuery = supabase
+        .from("producto_imagenes")
+        .select("producto_id, imagen_url")
+        .in("producto_id", productIds);
+      if (activeSucursalId) imgsQuery = imgsQuery.eq("sucursal_id", activeSucursalId);
+      const { data: imgs, error: imgsError } = await imgsQuery;
+      if (!imgsError && Array.isArray(imgs)) {
+        const map = {};
+        productosData.forEach((prod) => {
+          const pid = String(prod.user_id ?? "");
+          if (pid && prod.imagen_url) map[pid] = prod.imagen_url;
+        });
+        imgs.forEach((img) => {
+          const pid = String(img.producto_id);
+          if (!map[pid] && img.imagen_url) map[pid] = img.imagen_url;
+        });
+        setImagenPrincipalByProducto(map);
+      }
+    } else {
+      setImagenPrincipalByProducto({});
     }
 
     setLoading(false);
@@ -569,7 +592,7 @@ export default function AumentarStockPage() {
       setIncrements((prev) => ({ ...prev, [key]: 0 }));
 
       if (shouldPrint) {
-        const barcode = String(variante.codigo_barra || variante.sku || prod.codigo_barra || "").trim();
+        const barcode = String(variante.sku || prod.codigo_barra || "").trim();
         if (!barcode) {
           showToast("No se puede imprimir: la variante/producto no tiene código de barras", "error");
           return;
@@ -598,7 +621,12 @@ export default function AumentarStockPage() {
       const matchesCategory = categoryFilter === "all" || categoryName === categoryFilter;
       const matchesSearch =
         !term ||
-        [prod.nombre, prod.codigo_barra, categoryName].some((value) =>
+        [
+          prod.nombre,
+          prod.codigo_barra,
+          categoryName,
+          ...(variantesByProducto[String(prod.user_id ?? prod.id ?? "")] || []).flatMap((variant) => [variant.sku, variant.color]),
+        ].some((value) =>
           String(value || "").toLowerCase().includes(term)
         );
       return matchesCategory && matchesSearch;

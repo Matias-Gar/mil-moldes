@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 import { usePromociones } from "@/lib/usePromociones";
 import { usePacks, calcularDescuentoPack } from "@/lib/packs";
 import { supabase } from "@/lib/SupabaseClient";
-import { DEFAULT_STORE_SETTINGS, fetchStoreSettings } from "@/lib/storeSettings";
+import { DEFAULT_STORE_SETTINGS, fetchStoreSettings, resolveBranchWhatsapp } from "@/lib/storeSettings";
 import { PrecioConPromocion, calcularPrecioConPromocion, PromoCompactBanner } from "@/lib/promociones";
 import { getOptimizedImageUrl } from "@/lib/imageOptimization";
 import { normalizeProductView } from "@/lib/productViews";
@@ -955,7 +955,7 @@ export default function CatalogoPage() {
             `¡Hola! Me gustaría hacer el siguiente pedido:\n\n${pedidoTexto}\n${nombreTexto}${nitciTexto}\n${itemsList}\n\n*Total:* Bs ${total}\n\n¡Gracias!`
         );
 
-        const whatsappNumber = storeSettings?.whatsapp_number || CONFIG.WHATSAPP_BUSINESS;
+        const whatsappNumber = resolveBranchWhatsapp(activeSucursal, storeSettings) || CONFIG.WHATSAPP_BUSINESS;
         const whatsappURL = `https://wa.me/${whatsappNumber}?text=${message}`;
         window.open(whatsappURL, '_blank');
 

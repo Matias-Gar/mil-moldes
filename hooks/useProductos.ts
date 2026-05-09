@@ -277,11 +277,40 @@ export function useProductos(_includeCost = false, sucursalId?: string) {
 
       const numericMatch = term.match(/^\d+$/);
 
-      // Si no encontramos por código de variante y la búsqueda era numérica,
-      // devolvemos vacío para evitar caer al código general de producto.
+      // Si no encontramos por sku de variante, buscar por codigo de barra del producto.
       if (resultados.length === 0 && numericMatch) {
-        setSearchResults([]);
-        return [] as Producto[];
+        const fallbackCode = term.length === 13 ? term.slice(0, -1) : '';
+        let query = supabase
+          .from('v_productos_catalogo')
+          .select('producto_id, nombre, precio_base, stock_total, codigo_barra, categoria, variantes')
+          .limit(50);
+        if (sucursalId) query = query.eq('sucursal_id', sucursalId);
+        query = fallbackCode
+          ? query.or(`codigo_barra.eq.${term},codigo_barra.eq.${fallbackCode}`)
+          : query.eq('codigo_barra', term);
+        const { data, error } = await query;
+        if (error) throw error;
+        const exactMatches = (Array.isArray(data) ? data : []).filter((p) => matchesBarcode(term, p.codigo_barra));
+        const productosEncontrados = exactMatches.map((p) => {
+          const variantes = Array.isArray(p.variantes)
+            ? (p.variantes as Producto['variantes'])
+            : [];
+          const precioBase = Number(p.precio_base ?? 0);
+          return {
+            user_id: String(p.producto_id ?? ''),
+            nombre: String(p.nombre ?? ''),
+            precio: precioBase,
+            precio_base: precioBase,
+            precio_compra: undefined,
+            stock: Number(p.stock_total ?? 0),
+            stock_total: Number(p.stock_total ?? 0),
+            codigo_barra: String(p.codigo_barra ?? ''),
+            categoria: String(p.categoria ?? ''),
+            categorias: { categori: String(p.categoria ?? '') },
+            variantes
+          } as Producto;
+        });
+        resultados = await enriquecerUnidades(productosEncontrados, sucursalId);
       }
 
       // Si no encontramos por código de variante, buscar por nombre/categoría

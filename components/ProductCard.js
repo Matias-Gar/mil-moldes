@@ -40,6 +40,46 @@ export default function ProductCard({
     null;
   const firstImage = selectedPrimaryImage?.imagen_url || ""; // Solo producto
 
+  const escapeHtml = (value) => String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+
+  const printVariantLabel = (variant) => {
+    const code = String(variant?.sku || "").trim();
+    if (!code || typeof window === "undefined") return;
+    const label = `${prod.nombre || "Producto"} - ${variant?.color || "Unico"}`;
+    const barcodeUrl = `https://bwipjs-api.metafloor.com/?bcid=code128&text=${encodeURIComponent(code)}&scale=2&height=10&includetext=true`;
+    const popup = window.open("", "_blank", "width=900,height=700");
+    if (!popup) return;
+    popup.document.write(`
+      <html>
+        <head>
+          <title>Etiqueta - ${escapeHtml(label)}</title>
+          <style>
+            @page { size: auto; margin: 8mm; }
+            body { font-family: Arial, sans-serif; margin: 0; padding: 10px; }
+            .label { border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; text-align: center; width: 260px; break-inside: avoid; }
+            .title { font-size: 12px; font-weight: 700; color: #111827; margin-bottom: 6px; }
+            img { width: 100%; max-height: 78px; object-fit: contain; }
+            .code { margin-top: 4px; font-size: 11px; color: #374151; word-break: break-all; }
+          </style>
+        </head>
+        <body>
+          <div class="label">
+            <div class="title">${escapeHtml(label)}</div>
+            <img src="${barcodeUrl}" alt="${escapeHtml(code)}" />
+            <div class="code">${escapeHtml(code)}</div>
+          </div>
+          <script>window.onload = function () { window.print(); };</script>
+        </body>
+      </html>
+    `);
+    popup.document.close();
+  };
+
   const normalizeColor = (value) => {
     const raw = String(value || "").trim().replace(/\s+/g, " ");
     if (!raw) return "";
@@ -248,13 +288,23 @@ export default function ProductCard({
                   />
                   Activo
                 </label>
-                <Button
-                  type="button"
-                  onClick={() => onRemoveVariantRow(productId, idx)}
-                  className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 text-xs"
-                >
-                  Eliminar
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    onClick={() => printVariantLabel(variant)}
+                    disabled={!String(variant?.sku || "").trim()}
+                    className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white px-2 py-1 text-xs"
+                  >
+                    Imprimir
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => onRemoveVariantRow(productId, idx)}
+                    className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 text-xs"
+                  >
+                    Eliminar
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
