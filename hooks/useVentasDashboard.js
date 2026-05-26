@@ -52,6 +52,21 @@ function paymentMethodLabel(value) {
   return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : 'No especificado';
 }
 
+function normalizePaymentMethod(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['efectivo', 'cash'].includes(normalized)) return 'efectivo';
+  if (['qr'].includes(normalized)) return 'qr';
+  if (['tarjeta', 'card'].includes(normalized)) return 'tarjeta';
+  if (['transferencia', 'transfer'].includes(normalized)) return 'transferencia';
+  return normalized || 'sin_pago';
+}
+
+function productTypeLabel(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'insumos') return 'Insumo';
+  return 'Articulo';
+}
+
 function isWithinDateRange(dateValue, from, to) {
   if (!from && !to) return true;
   const date = new Date(dateValue);
@@ -68,6 +83,7 @@ function isWithinDateRange(dateValue, from, to) {
 export function useVentasDashboard(sucursalId = null) {
   const [ventas, setVentas] = useState([]);
   const [detallesPorVenta, setDetallesPorVenta] = useState({});
+  const [pagosPorVenta, setPagosPorVenta] = useState({});
   const [productMap, setProductMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -83,7 +99,7 @@ export function useVentasDashboard(sucursalId = null) {
       try {
         let ventasQuery = supabase
           .from('ventas')
-          .select('id, cliente_nombre, total, fecha, descuentos, costos_extra, modo_pago')
+          .select('id, cliente_nombre, total, pago, cambio, fecha, descuentos, costos_extra, modo_pago')
           .order('fecha', { ascending: false });
         if (sucursalId) ventasQuery = ventasQuery.eq('sucursal_id', sucursalId);
         const { data: ventasData, error: ventasError } = await ventasQuery;
@@ -108,7 +124,13 @@ export function useVentasDashboard(sucursalId = null) {
             producto_id,
             pack_id,
             productos (
-              nombre
+              nombre,
+              categoria,
+              category_id,
+              vista_producto,
+              categorias (
+                categori
+              )
             ),
             packs (
               nombre
@@ -150,7 +172,20 @@ export function useVentasDashboard(sucursalId = null) {
           const ids = Array.from(productIds);
           let productsQuery = supabase
             .from('productos')
-            .select('user_id, nombre, precio_compra, unidad_base, unidades_alternativas, factor_conversion')
+            .select(`
+              user_id,
+              nombre,
+              precio_compra,
+              categoria,
+              category_id,
+              vista_producto,
+              unidad_base,
+              unidades_alternativas,
+              factor_conversion,
+              categorias (
+                categori
+              )
+            `)
             .in('user_id', ids);
           if (sucursalId) productsQuery = productsQuery.eq('sucursal_id', sucursalId);
           const { data: productsData, error: productsError } = await productsQuery;
@@ -158,6 +193,25 @@ export function useVentasDashboard(sucursalId = null) {
           if (productsError) throw productsError;
           products = Array.isArray(productsData) ? productsData : [];
         }
+
+        let pagosQuery = supabase
+          .from('ventas_pagos')
+          .select('venta_id, monto, metodo_pago, fecha');
+        if (sucursalId) pagosQuery = pagosQuery.eq('sucursal_id', sucursalId);
+        const pagosResult = await pagosQuery;
+        const pagosData = pagosResult.error ? [] : (pagosResult.data || []);
+        const pagosMap = {};
+        pagosData.forEach((pago) => {
+          const ventaId = pago?.venta_id;
+          if (!ventaId) return;
+          if (!pagosMap[ventaId]) pagosMap[ventaId] = [];
+          pagosMap[ventaId].push({
+            metodo: normalizePaymentMethod(pago?.metodo_pago),
+            label: paymentMethodLabel(pago?.metodo_pago),
+            monto: toNumber(pago?.monto),
+            fecha: pago?.fecha,
+          });
+        });
 
         const nextProductMap = {};
         products.forEach((p) => {
@@ -167,6 +221,7 @@ export function useVentasDashboard(sucursalId = null) {
         if (!mounted) return;
         setVentas(safeVentas);
         setDetallesPorVenta(detallesMap);
+        setPagosPorVenta(pagosMap);
         setProductMap(nextProductMap);
       } catch (e) {
         if (!mounted) return;
@@ -199,6 +254,7 @@ export function useVentasDashboard(sucursalId = null) {
           const precioUnitario = toNumber(item?.precio_unitario || 0);
 
           const productInfo = productMap[item?.producto_id] || null;
+          const productRelation = item?.productos || null;
           const costoUnitarioDetalle = item?.costo_unitario;
           const costoUnitario = costoUnitarioDetalle != null
             ? toNumber(costoUnitarioDetalle)
@@ -227,7 +283,7 @@ export function useVentasDashboard(sucursalId = null) {
           const gananciaItem = ingreso - costo;
 
           const itemName =
-            item?.productos?.nombre ||
+            productRelation?.nombre ||
             productInfo?.nombre ||
             item?.packs?.nombre ||
             item?.descripcion ||
@@ -235,8 +291,22 @@ export function useVentasDashboard(sucursalId = null) {
               ? `Pack #${item?.pack_id ?? 'N/A'}`
               : `Producto #${item?.producto_id ?? 'N/A'}`);
 
+          const categoryName =
+            productRelation?.categorias?.categori ||
+            productInfo?.categorias?.categori ||
+            productRelation?.categoria ||
+            productInfo?.categoria ||
+            productRelation?.category_id ||
+            productInfo?.category_id ||
+            'Sin categoria';
+          const productView = productRelation?.vista_producto || productInfo?.vista_producto || 'articulos';
+
           items.push({
+            productoId: item?.producto_id,
             nombre: itemName,
+            categoria: String(categoryName || 'Sin categoria'),
+            vistaProducto: String(productView || 'articulos'),
+            tipoInventario: productTypeLabel(productView),
             cantidad: qtyDisplay,
             cantidadBase: qtyBase,
             unidad: displayUnit,
@@ -257,6 +327,18 @@ export function useVentasDashboard(sucursalId = null) {
 
         const extraCosts = normalizeExtraCosts(venta?.costos_extra);
         const totalVenta = toNumber(venta?.total || items.reduce((sum, item) => sum + item.ingreso, 0));
+        const pagos = pagosPorVenta[venta.id] || [];
+        const pagoEntrante = pagos.length > 0
+          ? pagos.reduce((sum, pago) => sum + toNumber(pago?.monto), 0)
+          : toNumber(venta?.pago || totalVenta);
+        const paymentKeys = pagos.length > 0
+          ? Array.from(new Set(pagos.map((pago) => pago.metodo).filter(Boolean)))
+          : [normalizePaymentMethod(venta?.modo_pago)];
+        const paymentLabels = pagos.length > 0
+          ? pagos.map((pago) => `${pago.label} ${pago.monto > 0 ? `(${pago.monto.toFixed(2)})` : ''}`.trim()).join(', ')
+          : paymentMethodLabel(venta?.modo_pago);
+        const ingresoBase = ingresosItems || totalVenta || pagoEntrante || 0;
+        const netItemFactor = ingresoBase > 0 ? Math.max(0, totalVenta) / ingresoBase : 1;
         const costoMercaderia = costoItems;
         const puedeAnalizar = items.length > 0;
         const gananciaProductos = ingresosItems - costoMercaderia;
@@ -276,11 +358,12 @@ export function useVentasDashboard(sucursalId = null) {
           ? `${cliente} compro ${joinWithY(resumenItems)}`
           : `${cliente} no tiene productos detallados en esta venta`;
 
-        return {
+        const row = {
           id: venta.id,
           cliente,
           fecha: venta?.fecha,
           total: totalVenta,
+          pagoEntrante,
           costo: costoTotal,
           ganancia,
           margen,
@@ -289,12 +372,15 @@ export function useVentasDashboard(sucursalId = null) {
           cantidadProductos,
           details,
           items,
+          pagos,
+          paymentKeys,
           resumenCompra,
           ingresosItems,
           costoMercaderia,
           gananciaProductos,
           ajustesOperativos,
-          metodoPago: paymentMethodLabel(venta?.modo_pago),
+          metodoPago: paymentLabels,
+          metodoPagoPrincipal: paymentMethodLabel(venta?.modo_pago),
           impuestos: extraCosts.impuestos,
           envio: extraCosts.envio,
           comision: extraCosts.comision,
@@ -302,9 +388,22 @@ export function useVentasDashboard(sucursalId = null) {
           rebajas: extraCosts.rebajas,
           puedeAnalizar,
         };
+
+        row.items = row.items.map((item) => {
+          const ingresoNeto = item.ingreso * netItemFactor;
+          const gananciaNeta = ingresoNeto - item.costo;
+          return {
+            ...item,
+            ingresoNeto,
+            gananciaNeta,
+            margenNeto: ingresoNeto > 0 ? (gananciaNeta / ingresoNeto) * 100 : 0,
+          };
+        });
+
+        return row;
       })
       .sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
-  }, [ventas, detallesPorVenta, productMap, dateFrom, dateTo]);
+  }, [ventas, detallesPorVenta, pagosPorVenta, productMap, dateFrom, dateTo]);
 
   const kpis = useMemo(() => {
     const totalVentas = salesRows.length;
