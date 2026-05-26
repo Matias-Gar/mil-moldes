@@ -228,6 +228,28 @@ export default function TodasVentasPage() {
           onClear={resetFilters}
         />
 
+        {error ? (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
+          <KpiCard title="Ventas" value={loading ? '...' : filteredKpis.totalVentas} tone="info" />
+          <KpiCard title="Cobrado neto" value={loading ? '...' : money(filteredKpis.totalIngresos)} tone="info" />
+          <KpiCard title="Costo" value={loading ? '...' : money(filteredKpis.totalCosto)} tone="neutral" />
+          <KpiCard title="Ganancia" value={loading ? '...' : money(filteredKpis.totalGanancias)} tone="success" />
+          <KpiCard title="Margen" value={loading ? '...' : `${filteredKpis.margen.toFixed(2)}%`} tone="success" />
+          <KpiCard title="Rebajas" value={loading ? '...' : money(filteredKpis.totalRebajas + filteredKpis.totalDescuentos)} tone="warning" />
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+          <div className="xl:col-span-2">
+            <SalesChart data={salesByDay} />
+          </div>
+          <TopProductsCard products={topProducts} />
+        </div>
+
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
             <div>
@@ -269,28 +291,6 @@ export default function TodasVentasPage() {
               <input value={filters.search} onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))} className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" placeholder="Aretes, vinilo, cliente..." />
             </div>
           </div>
-        </div>
-
-        {error ? (
-          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">
-            {error}
-          </div>
-        ) : null}
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
-          <KpiCard title="Ventas" value={loading ? '...' : filteredKpis.totalVentas} tone="info" />
-          <KpiCard title="Cobrado neto" value={loading ? '...' : money(filteredKpis.totalIngresos)} tone="info" />
-          <KpiCard title="Costo" value={loading ? '...' : money(filteredKpis.totalCosto)} tone="neutral" />
-          <KpiCard title="Ganancia" value={loading ? '...' : money(filteredKpis.totalGanancias)} tone="success" />
-          <KpiCard title="Margen" value={loading ? '...' : `${filteredKpis.margen.toFixed(2)}%`} tone="success" />
-          <KpiCard title="Rebajas" value={loading ? '...' : money(filteredKpis.totalRebajas + filteredKpis.totalDescuentos)} tone="warning" />
-        </div>
-
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-          <div className="xl:col-span-2">
-            <SalesChart data={salesByDay} />
-          </div>
-          <TopProductsCard products={topProducts} />
         </div>
 
         <SalesTable rows={filteredRows} />
