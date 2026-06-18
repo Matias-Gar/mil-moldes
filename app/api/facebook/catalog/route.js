@@ -27,6 +27,7 @@ export async function POST(request) {
           .from('productos')
           .select('*')
           .eq('user_id', producto_id)
+          .eq('archivado', false)
           .single();
 
         if (!producto) {

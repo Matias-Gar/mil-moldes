@@ -76,6 +76,7 @@ export async function GET() {
           categori
         )
       `)
+      .eq('archivado', false)
       .gt('stock', 0); // Solo productos con stock
 
     if (productosError) {

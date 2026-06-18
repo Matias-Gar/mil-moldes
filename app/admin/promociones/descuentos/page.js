@@ -34,7 +34,8 @@ export default function PromocionesDescuentosPage() {
             precio,
             stock,
             categoria,
-            descripcion
+            descripcion,
+            archivado
           )
         `)
         .order('activa', { ascending: false }) // Primero las activas
@@ -46,7 +47,7 @@ export default function PromocionesDescuentosPage() {
         console.error("Error al cargar promociones:", promoError);
         alert("Error al cargar datos: " + promoError.message);
       } else if (promocionesData) {
-        setProductosConPromociones(promocionesData);
+        setProductosConPromociones(promocionesData.filter((item) => !item.productos?.archivado));
       }
     } catch (error) {
       console.error("Error general:", error);

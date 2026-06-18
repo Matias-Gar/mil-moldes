@@ -91,6 +91,7 @@ export default function CatalogoPage() {
         let prodsQuery = supabase
           .from("productos")
           .select("user_id, nombre, descripcion, precio, stock, imagen_url, category_id, codigo_barra, vista_producto, unidad_base, unidades_alternativas, factor_conversion, categorias (categori)")
+          .eq("archivado", false)
           .order("created_at", { ascending: false })
           .limit(1000);
         if (activeSucursalId) prodsQuery = prodsQuery.eq("sucursal_id", activeSucursalId);

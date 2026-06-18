@@ -80,6 +80,7 @@ async function generarMensajeNuevaPromocion(promocion) {
       categorias (categori)
     `)
     .eq('user_id', promocion.producto_id)
+    .eq('archivado', false)
     .single();
 
   if (!producto) return '';

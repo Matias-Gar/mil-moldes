@@ -231,6 +231,7 @@ export default function AumentarStockPage() {
         factor_conversion,
         categorias (categori)
       `)
+      .eq("archivado", false)
       .order("nombre", { ascending: true })
       .limit(1200);
     if (activeSucursalId) productosQuery = productosQuery.eq("sucursal_id", activeSucursalId);

@@ -238,6 +238,7 @@ async function buscarProductoPorTexto(texto) {
         stock,
         categorias (categori)
       `)
+      .eq('archivado', false)
       .or(`nombre.ilike.%${texto}%,descripcion.ilike.%${texto}%`)
       .gt('stock', 0)
       .limit(5);

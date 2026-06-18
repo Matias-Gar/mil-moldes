@@ -32,7 +32,10 @@ export default function PacksClient({ initialPacks = [] }) {
   // Cargar todos los productos para edición
   useEffect(() => {
     if (editPack) {
-      let query = supabase.from("productos").select("user_id, nombre, precio, stock, categoria, codigo_barra");
+      let query = supabase
+        .from("productos")
+        .select("user_id, nombre, precio, stock, categoria, codigo_barra")
+        .eq("archivado", false);
       if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
       query.then(({ data }) => setProductosAll(data || []));
     }
@@ -107,7 +110,8 @@ export default function PacksClient({ initialPacks = [] }) {
     setLoading(true);
     let query = supabase
       .from("productos")
-      .select("user_id, nombre, precio, stock, categoria, codigo_barra");
+      .select("user_id, nombre, precio, stock, categoria, codigo_barra")
+      .eq("archivado", false);
     if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
     const { data, error } = await query;
     setProductos(data || []);

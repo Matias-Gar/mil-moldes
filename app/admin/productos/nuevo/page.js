@@ -1307,6 +1307,7 @@ export default function AdminProductosPage() {
                 created_at,
                 categorias (categori)
             `)
+            .eq('archivado', false)
             .order('created_at', { ascending: false });
         if (activeSucursalId) query = query.eq('sucursal_id', activeSucursalId);
         let response = await query;
@@ -1330,6 +1331,7 @@ export default function AdminProductosPage() {
                     created_at,
                     categorias (categori)
                 `)
+                .eq('archivado', false)
                 .order('created_at', { ascending: false });
             if (activeSucursalId) fallbackQuery = fallbackQuery.eq('sucursal_id', activeSucursalId);
             response = await fallbackQuery;
