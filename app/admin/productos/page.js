@@ -18,6 +18,7 @@ import { useSucursalActiva } from '../../../components/admin/SucursalContext';
 // Si la tabla usa react-barcode, este dynamic es necesario. Si solo usa la función handlePrintBarcode, se podría quitar.
 // Lo mantendremos por si acaso el componente de tabla lo usa internamente.
 const Barcode = dynamic(() => import('react-barcode'), { ssr: false });
+const SUPABASE_PAGE_SIZE = 1000;
 
 function parseDecimalInput(value, fallback = 0) {
     if (value === undefined || value === null || value === "") return fallback;
@@ -517,12 +518,27 @@ export default function AdminProductosPage() {
         // 2. Traer imágenes de todos los productos
         const ids = formattedData.map(p => p.user_id);
         if (ids.length > 0) {
-            let imgsQuery = supabase
-                .from('producto_imagenes')
-                .select('producto_id, imagen_url')
-                .in('producto_id', ids);
-            if (activeSucursalId) imgsQuery = imgsQuery.eq('sucursal_id', activeSucursalId);
-            const { data: imgs, error: imgsError } = await imgsQuery;
+            let imgs = [];
+            let imgsError = null;
+            let from = 0;
+            while (true) {
+                let imgsQuery = supabase
+                    .from('producto_imagenes')
+                    .select('producto_id, imagen_url')
+                    .in('producto_id', ids);
+                if (activeSucursalId) imgsQuery = imgsQuery.eq('sucursal_id', activeSucursalId);
+                imgsQuery = imgsQuery
+                    .order('id', { ascending: true })
+                    .range(from, from + SUPABASE_PAGE_SIZE - 1);
+                const { data, error } = await imgsQuery;
+                if (error) {
+                    imgsError = error;
+                    break;
+                }
+                imgs = [...imgs, ...(data || [])];
+                if (!data || data.length < SUPABASE_PAGE_SIZE) break;
+                from += SUPABASE_PAGE_SIZE;
+            }
             if (!imgsError && imgs) {
                 // Agrupar por producto_id
                 const agrupadas = {};

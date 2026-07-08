@@ -24,6 +24,7 @@ import CantidadConUnidadInput from '../../../../components/CantidadConUnidadInpu
 // Si la tabla usa react-barcode, este dynamic es necesario. Si solo usa la función handlePrintBarcode, se podría quitar.
 // Lo mantendremos por si acaso el componente de tabla lo usa internamente.
 const Barcode = dynamic(() => import('react-barcode'), { ssr: false });
+const SUPABASE_PAGE_SIZE = 1000;
 
 const DEFAULT_COLOR_PALETTE = [
     // Colores básicos
@@ -1356,12 +1357,27 @@ export default function AdminProductosPage() {
         // 2. Traer imágenes de todos los productos
         const ids = formattedData.map(p => p.user_id);
         if (ids.length > 0) {
-            let imagesQuery = supabase
-                .from('producto_imagenes')
-                .select('producto_id, imagen_url')
-                .in('producto_id', ids);
-            if (activeSucursalId) imagesQuery = imagesQuery.eq('sucursal_id', activeSucursalId);
-            const { data: imgs, error: imgsError } = await imagesQuery;
+            let imgs = [];
+            let imgsError = null;
+            let from = 0;
+            while (true) {
+                let imagesQuery = supabase
+                    .from('producto_imagenes')
+                    .select('producto_id, imagen_url')
+                    .in('producto_id', ids);
+                if (activeSucursalId) imagesQuery = imagesQuery.eq('sucursal_id', activeSucursalId);
+                imagesQuery = imagesQuery
+                    .order('id', { ascending: true })
+                    .range(from, from + SUPABASE_PAGE_SIZE - 1);
+                const { data, error } = await imagesQuery;
+                if (error) {
+                    imgsError = error;
+                    break;
+                }
+                imgs = [...imgs, ...(data || [])];
+                if (!data || data.length < SUPABASE_PAGE_SIZE) break;
+                from += SUPABASE_PAGE_SIZE;
+            }
             if (!imgsError && imgs) {
                 // Agrupar por producto_id y filtrar URLs vacías/nulas/incorrectas
                 const agrupadas = {};
