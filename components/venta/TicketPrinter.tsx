@@ -132,6 +132,7 @@ function calcularItem(item: TicketItem) {
   const precioFinalVisual = Number((precioFinal / divisorVisual).toFixed(2));
   const cantidadParaTotal = Number.isFinite(cantidadDisplay) && cantidadDisplay > 0 ? cantidadDisplay : cantidadBase;
   const totalLinea = Number((precioFinalVisual * cantidadParaTotal).toFixed(2));
+  const descuentoTotalLinea = Number((descuentoVisual * cantidadParaTotal).toFixed(2));
   const tieneDescuento = descuento > 0;
 
   return {
@@ -143,6 +144,7 @@ function calcularItem(item: TicketItem) {
     precioOriginalVisual,
     descuento,
     descuentoVisual,
+    descuentoTotalLinea,
     precioFinal,
     precioFinalVisual,
     totalLinea,
@@ -264,7 +266,7 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
         const nombre = limpiarTexto(item.nombre || item.producto_nombre) || 'Producto';
         const qty = item.cantidadDisplay || item.cantidad || item.cant || 1;
         const unidad = item.unidadVenta ? ` ${limpiarTexto(item.unidadVenta)}` : '';
-        const descuentoItem = item.descuentoVisual;
+        const descuentoItem = item.descuentoTotalLinea;
         const precioFinal = item.precioFinalVisual;
         const totalLinea = item.totalLinea;
         const promocion = item.promocion || item.promocion_aplicada;
@@ -317,7 +319,7 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
 
       doc.setFont('courier', 'bold');
       doc.text('SUBTOTAL', MARGIN, y); doc.text(`Bs ${subtotal.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 2.5;
-      if (descuento > 0) { doc.text('DESC', MARGIN, y); doc.text(`-Bs ${descuento.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 2.5; }
+      if (descuento > 0) { doc.text('DESC TOTAL', MARGIN, y); doc.text(`-Bs ${descuento.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 2.5; }
       if (envio > 0) { doc.text('ENVIO', MARGIN, y); doc.text(`+Bs ${envio.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 2.5; }
       if (comision > 0) { doc.text('COMISION', MARGIN, y); doc.text(`+Bs ${comision.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 2.5; }
       if (publicidad > 0) { doc.text('PUBLICIDAD', MARGIN, y); doc.text(`-Bs ${publicidad.toFixed(2)}`, PAPER_WIDTH - MARGIN, y, { align: 'right' }); y += 2.5; }
@@ -451,7 +453,8 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
         lines.push(detalle);
         lines.push(`  P/U Bs ${itemCalc.precioFinalVisual.toFixed(2)}${unidad ? `/${unidad.trim()}` : ''}`);
         if (itemCalc.descuento > 0) {
-          lines.push(`  PROMO: ${(item.promocion?.descripcion || 'Descuento').substring(0,18)} -${itemCalc.descuentoVisual.toFixed(2)}`);
+          const promo = item.promocion || item.promocion_aplicada;
+          lines.push(`  PROMO: ${(promo?.descripcion || 'Descuento').substring(0,18)} -${itemCalc.descuentoTotalLinea.toFixed(2)}`);
           lines.push(`  ANTES: ${itemCalc.precioOriginalVisual.toFixed(2)}`);
         }
       }
@@ -474,7 +477,7 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
       lines.push('         RESUMEN DE PAGO        ');
       lines.push('--------------------------------');
       lines.push(`SUBTOTAL:           Bs ${subtotal.toFixed(2)}`);
-      if (descuento > 0) lines.push(`DESCUENTO:        -Bs ${descuento.toFixed(2)}`);
+      if (descuento > 0) lines.push(`DESC TOTAL:       -Bs ${descuento.toFixed(2)}`);
       if (envio > 0) lines.push(`ENVÍO:            +Bs ${envio.toFixed(2)}`);
       if (comision > 0) lines.push(`COMISIÓN:         +Bs ${comision.toFixed(2)}`);
       if (publicidad > 0) lines.push(`PUBLICIDAD:       -Bs ${publicidad.toFixed(2)}`);
@@ -538,7 +541,7 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
             descuento_item: it.descuento_item || 0,
             promocion: it.promocion_aplicada || null
           })),
-          subtotal: props.subtotal,
+          subtotal: Number(props.subtotal || 0) + Number(props.totalDescuento || 0),
           descuento: props.totalDescuento,
           envio: props.envio || 0,
           comision: props.comision || 0,
@@ -627,7 +630,7 @@ const TicketPrinter = forwardRef<TicketPrinterHandle, TicketPrinterProps>((props
         descuento_item: it.descuento_item || 0,
         promocion: it.promocion_aplicada || null
       })),
-      subtotal: props.subtotal,
+      subtotal: Number(props.subtotal || 0) + Number(props.totalDescuento || 0),
       descuento: props.totalDescuento,
       envio: props.envio || 0,
       comision: props.comision || 0,
