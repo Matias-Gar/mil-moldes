@@ -133,6 +133,18 @@ const getItemKey = (item: { tipo?: 'pack' | 'producto'; user_id?: string | numbe
   return `prod:${String(item.user_id ?? '')}:${String(item.variante_id ?? 'default')}`;
 };
 
+const applyProductPricing = (item: CartItem | Producto, promociones: unknown[]): CartItem | Producto => {
+  if (item.tipo === 'pack') return item;
+  const precioInfo = calcularPrecioConPromocion(item, promociones);
+  return {
+    ...item,
+    precio: precioInfo.precioFinal,
+    precio_original: precioInfo.precioOriginal,
+    descuento_item: precioInfo.descuento,
+    promocion_aplicada: precioInfo.promocion,
+  };
+};
+
 // Este hook centraliza todo lo relacionado al carrito: estado, operaciones y totales.
 export function useCarrito(promociones: unknown[]) {
   const { packs, loading: loadingPacks } = usePacks() as { packs: Pack[]; loading: boolean; };
@@ -142,15 +154,7 @@ export function useCarrito(promociones: unknown[]) {
   // recalculate cart if promociones change (fixed new promo detect)
   useEffect(() => {
     setCarrito(prev => prev.map(item => {
-      if (item.tipo === 'pack') return item;
-      const precioInfo = calcularPrecioConPromocion(item, promociones);
-      return {
-        ...item,
-        precio: precioInfo.precioFinal,
-        precio_original: precioInfo.precioOriginal,
-        descuento_item: precioInfo.descuento,
-        promocion_aplicada: precioInfo.promocion
-      };
+      return applyProductPricing(item, promociones) as CartItem;
     }));
   }, [promociones]);
 
@@ -185,8 +189,6 @@ export function useCarrito(promociones: unknown[]) {
       cantidad_base: requestedBaseQuantity,
       cantidad_display: requestedDisplayQuantity
     };
-    const precioInfo = calcularPrecioConPromocion(prodBase, promociones);
-    const precioFinal = precioInfo.precioFinal;
     const availableStock = getAvailableStock(prodBase);
 
     if (availableStock <= 0 || requestedBaseQuantity > availableStock) {
@@ -202,7 +204,9 @@ export function useCarrito(promociones: unknown[]) {
           setStockWarning(`${prod.nombre}${prod.color ? ` (${prod.color})` : ''} solo tiene ${availableStock} unidad${availableStock === 1 ? '' : 'es'} disponible${availableStock === 1 ? '' : 's'}.`);
           return prev;
         }
-        return prev.map(p => getItemKey(p) === cartKey ? {
+        return prev.map(p => {
+          if (getItemKey(p) !== cartKey) return p;
+          const nextItem = {
           ...p,
           unidad_base: prodBase.unidad_base ?? p.unidad_base,
           unidades_alternativas: prodBase.unidades_alternativas ?? p.unidades_alternativas,
@@ -212,24 +216,20 @@ export function useCarrito(promociones: unknown[]) {
           cantidad_base: Math.min(getBaseQuantity(p) + requestedBaseQuantity, availableStock),
           cantidad_display: getDisplayQuantity(p) + requestedDisplayQuantity,
           stock: Number.isFinite(availableStock) ? availableStock : p.stock,
-          precio: precioFinal,
-          precio_original: precioInfo.precioOriginal,
-          descuento_item: precioInfo.descuento,
-          promocion_aplicada: precioInfo.promocion,
           unidad: prodBase.unidad
-        } : p);
+          };
+          return applyProductPricing(nextItem, promociones) as CartItem;
+        });
       }
-      return [...prev, {
+      const nextItem = {
         ...prodBase,
         cart_key: cartKey,
         cantidad: requestedBaseQuantity,
         cantidad_base: requestedBaseQuantity,
         cantidad_display: requestedDisplayQuantity,
         stock: Number.isFinite(availableStock) ? availableStock : Number(prod.stock ?? 0),
-        precio: precioFinal,
-        descuento_item: precioInfo.descuento,
-        promocion_aplicada: precioInfo.promocion
-      }];
+      };
+      return [...prev, applyProductPricing(nextItem, promociones) as CartItem];
     });
     setStockWarning('');
     return true;
@@ -290,15 +290,16 @@ export function useCarrito(promociones: unknown[]) {
       const nextDisplayQuantity = Number.isFinite(Number(cantidadDisplay))
         ? Math.max(0.0001, Number(cantidadDisplay))
         : derivedDisplayQuantity;
-      return {
+      const nextItem = {
         ...i,
         cantidad: nextCantidad,
         cantidad_base: nextCantidad,
         cantidad_display: nextDisplayQuantity,
         unidad: nextUnidad
       };
+      return applyProductPricing(nextItem, promociones) as CartItem;
     }));
-  }, []);
+  }, [promociones]);
 
   // Mantener compatibilidad con cambiarCantidad (solo cantidad)
   const cambiarCantidad = useCallback((itemKey: string | number, cantidad: number) => {

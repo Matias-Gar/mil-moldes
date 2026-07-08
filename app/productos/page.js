@@ -228,7 +228,29 @@ export default function CatalogoPage() {
     };
     const getItemDisplayQuantity = (item) => Number(item?.cantidad_display ?? item?.cantidad ?? 0);
     const getItemBaseQuantity = (item) => Number(item?.cantidad_base ?? item?.cantidad ?? 0);
-    const getItemSubtotal = (item) => Number(item?.precio || 0) * getItemBaseQuantity(item);
+    const getItemPricing = (item) => {
+        if (item?.tipo === 'pack') {
+            return {
+                precioOriginal: Number(item?.precio_individual ?? item?.precio ?? 0),
+                precioFinal: Number(item?.precio ?? 0),
+                descuento: Number(item?.descuento_pack ?? 0),
+                tienePromocion: Number(item?.descuento_pack ?? 0) > 0,
+                promocion: item?.descuento_pack ? { descripcion: 'Pack especial' } : null,
+                porcentajeDescuento: '0',
+            };
+        }
+        return calcularPrecioConPromocion({
+            ...item,
+            precio_original: Number(item?.precio_original ?? item?.precio ?? 0),
+            cantidad_base: getItemBaseQuantity(item),
+            cantidad: getItemBaseQuantity(item),
+        }, promociones);
+    };
+    const getItemSubtotal = (item) => getItemPricing(item).precioFinal * getItemBaseQuantity(item);
+    const getItemDiscountTotal = (item) => Math.max(0, getItemPricing(item).descuento || 0) * getItemBaseQuantity(item);
+    const getCartSubtotalOriginal = () => cart.reduce((sum, item) => sum + Number(getItemPricing(item).precioOriginal || 0) * getItemBaseQuantity(item), 0);
+    const getCartDiscountTotal = () => cart.reduce((sum, item) => sum + getItemDiscountTotal(item), 0);
+    const getCartTotal = () => cart.reduce((sum, item) => sum + getItemSubtotal(item), 0);
     const getItemQuantityText = (item) => item?.tipo === 'pack'
         ? `x${getItemDisplayQuantity(item)}`
         : `${getItemDisplayQuantity(item)} ${item?.unidad || item?.unidad_base || 'unidad'}`;
@@ -890,6 +912,7 @@ export default function CatalogoPage() {
                 usuario_id: usuario ? usuario.id : null,
                 usuario_email: emailFinal || null,
                 productos: cart.map(p => {
+                    const precioInfo = getItemPricing(p);
                     if (p.tipo === 'pack') {
                         return {
                             tipo: 'pack',
@@ -898,6 +921,9 @@ export default function CatalogoPage() {
                             cantidad: getItemDisplayQuantity(p),
                             cantidad_base: getItemBaseQuantity(p),
                             precio_unitario: p.precio,
+                            precio_original: precioInfo.precioOriginal ?? p.precio,
+                            descuento_item: getItemDiscountTotal(p) / Math.max(1, getItemBaseQuantity(p)),
+                            promocion_aplicada: precioInfo.promocion || null,
                             productos: p.pack_data?.pack_productos?.map(pp => ({
                                 producto_id: pp.productos.user_id,
                                 variante_id: pp.variante_id || null,
@@ -917,9 +943,10 @@ export default function CatalogoPage() {
                         factor_conversion: Number(p.factor_conversion || 0) || null,
                         cantidad: getItemDisplayQuantity(p),
                         cantidad_base: getItemBaseQuantity(p),
-                        precio_unitario: p.precio,
-                        precio_original: p.precio_original ?? p.precio,
-                        promocion_aplicada: p.promocion_aplicada || null,
+                        precio_unitario: precioInfo.precioFinal,
+                        precio_original: precioInfo.precioOriginal ?? p.precio,
+                        descuento_item: precioInfo.descuento || 0,
+                        promocion_aplicada: precioInfo.promocion || p.promocion_aplicada || null,
                         nombre: p.nombre || null
                     };
                 }),
@@ -942,17 +969,27 @@ export default function CatalogoPage() {
         // 2. Preparar mensaje WhatsApp
         const itemsList = cart.map(item => {
             const cantidadTexto = getItemQuantityText(item);
+            const precioInfo = getItemPricing(item);
             const subtotal = getItemSubtotal(item).toFixed(2);
-            return `*${cantidadTexto}* ${item.nombre} - (Bs ${subtotal})`;
+            const descuentoTexto = precioInfo.promocion?.descripcion && getItemDiscountTotal(item) > 0
+                ? `\n   ${precioInfo.promocion.descripcion}: -Bs ${getItemDiscountTotal(item).toFixed(2)}`
+                : '';
+            return `*${cantidadTexto}* ${item.nombre} - (Bs ${subtotal})${descuentoTexto}`;
         }).join('\n');
 
-        const total = cart.reduce((sum, item) => sum + getItemSubtotal(item), 0).toFixed(2);
+        const descuentoTotal = getCartDiscountTotal();
+        const subtotalOriginal = getCartSubtotalOriginal();
+        const total = getCartTotal().toFixed(2);
         const nombreTexto = nombreFinal ? `Nombre: ${nombreFinal}\n` : '';
         const nitciTexto = nitciLlenado ? `NIT/CI: ${nitciLlenado}\n` : '';
         const pedidoTexto = `N° Pedido: ${pedidoId}`;
 
+        const descuentoResumen = descuentoTotal > 0
+            ? `\n*Subtotal:* Bs ${subtotalOriginal.toFixed(2)}\n*Descuento al por mayor/promos:* -Bs ${descuentoTotal.toFixed(2)}`
+            : '';
+
         const message = encodeURIComponent(
-            `¡Hola! Me gustaría hacer el siguiente pedido:\n\n${pedidoTexto}\n${nombreTexto}${nitciTexto}\n${itemsList}\n\n*Total:* Bs ${total}\n\n¡Gracias!`
+            `¡Hola! Me gustaría hacer el siguiente pedido:\n\n${pedidoTexto}\n${nombreTexto}${nitciTexto}\n${itemsList}\n${descuentoResumen}\n\n*Total:* Bs ${total}\n\n¡Gracias!`
         );
 
         const whatsappNumber = resolveBranchWhatsapp(activeSucursal, storeSettings) || CONFIG.WHATSAPP_BUSINESS;
@@ -1876,7 +1913,12 @@ export default function CatalogoPage() {
                                         <li key={item.cart_key || getCartKey(item)} className="flex justify-between items-center py-2 border-b border-gray-200 last:border-b-0">
                                             <div className="flex-1">
                                                 <h4 className="font-semibold text-gray-800">{item.nombre}</h4>
-                                                <p className="text-sm text-gray-600">Bs {item.precio.toFixed(2)} c/u</p>
+                                                <p className="text-sm text-gray-600">Bs {getItemPricing(item).precioFinal.toFixed(2)} c/u</p>
+                                                {getItemDiscountTotal(item) > 0 && (
+                                                    <p className="text-xs font-semibold text-green-700">
+                                                        {getItemPricing(item).promocion?.descripcion || 'Descuento'}: -Bs {getItemDiscountTotal(item).toFixed(2)}
+                                                    </p>
+                                                )}
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 <button
@@ -1914,8 +1956,13 @@ export default function CatalogoPage() {
                             </ul>
                             <div className="flex justify-between items-center mb-3 pt-2 border-t-2 border-green-600 font-extrabold">
                                 <span className="text-lg text-green-800">Total:</span>
-                                <span className="text-2xl text-blue-800 bg-yellow-200 px-3 py-1 rounded-lg shadow">Bs {cart.reduce((sum, item) => sum + getItemSubtotal(item), 0).toFixed(2)}</span>
+                                <span className="text-2xl text-blue-800 bg-yellow-200 px-3 py-1 rounded-lg shadow">Bs {getCartTotal().toFixed(2)}</span>
                             </div>
+                            {getCartDiscountTotal() > 0 && (
+                                <div className="mb-3 text-right text-sm font-bold text-green-700">
+                                    Descuento al por mayor/promos: -Bs {getCartDiscountTotal().toFixed(2)}
+                                </div>
+                            )}
                         </>
                     )}
 
@@ -2023,7 +2070,12 @@ export default function CatalogoPage() {
                                             <div key={item.cart_key || getCartKey(item)} className="flex justify-between items-center py-2 border-b border-gray-200 last:border-b-0">
                                                 <div className="flex-1">
                                                     <h4 className="font-semibold text-gray-800">{item.nombre}</h4>
-                                                    <p className="text-sm text-gray-600">Bs {item.precio.toFixed(2)} c/u</p>
+                                                    <p className="text-sm text-gray-600">Bs {getItemPricing(item).precioFinal.toFixed(2)} c/u</p>
+                                                    {getItemDiscountTotal(item) > 0 && (
+                                                        <p className="text-xs font-semibold text-green-700">
+                                                            {getItemPricing(item).promocion?.descripcion || 'Descuento'}: -Bs {getItemDiscountTotal(item).toFixed(2)}
+                                                        </p>
+                                                    )}
                                                 </div>
                                                 <div className="flex items-center gap-3">
                                                     <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm font-semibold">
@@ -2040,9 +2092,14 @@ export default function CatalogoPage() {
                                         <div className="flex justify-between items-center">
                                             <span className="text-xl font-bold text-gray-800">Total:</span>
                                             <span className="text-2xl font-bold text-green-600 bg-green-100 px-4 py-2 rounded-lg">
-                                                Bs {cart.reduce((sum, item) => sum + getItemSubtotal(item), 0).toFixed(2)}
+                                                Bs {getCartTotal().toFixed(2)}
                                             </span>
                                         </div>
+                                        {getCartDiscountTotal() > 0 && (
+                                            <div className="mt-2 text-right text-sm font-bold text-green-700">
+                                                Descuento al por mayor/promos: -Bs {getCartDiscountTotal().toFixed(2)}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             </div>

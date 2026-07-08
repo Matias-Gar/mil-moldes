@@ -201,6 +201,11 @@ export default function CarritoPanel({
                           <div className="text-red-600 font-bold">-Bs {((precioInfo?.descuento||0) * getBaseQuantity(item)).toFixed(2)}</div>
 
                           <div className="text-red-600 text-sm">-{precioInfo.porcentajeDescuento}%</div>
+                          {precioInfo.promocion?.descripcion && (
+                            <div className="text-[11px] font-semibold text-red-700">
+                              {precioInfo.promocion.descripcion}
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <span className="text-gray-500">-</span>
