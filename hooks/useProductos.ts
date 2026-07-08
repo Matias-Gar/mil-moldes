@@ -45,6 +45,19 @@ interface VarianteBusqueda {
 }
 
 const SUPABASE_PAGE_SIZE = 1000;
+const SUPABASE_IN_CHUNK_SIZE = 200;
+
+function chunkArray<T>(items: T[], size = SUPABASE_IN_CHUNK_SIZE) {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function uniqueIds(ids: Array<string | number>) {
+  return Array.from(new Set(ids.map((id) => String(id)).filter(Boolean)));
+}
 
 // simple util to group images by producto_id
 function agruparImagenes(imgs: Array<{ producto_id: string | number; imagen_url?: string }>) {
@@ -77,19 +90,21 @@ async function fetchAllCatalogRows(selectFields: string, sucursalId?: string) {
 
 async function fetchImagesForProductIds(ids: Array<string | number>, sucursalId?: string) {
   let rows: Array<{ producto_id: string | number; imagen_url?: string }> = [];
-  let from = 0;
-  while (true) {
-    let query = supabase
-      .from('producto_imagenes')
-      .select('producto_id, imagen_url')
-      .in('producto_id', ids)
-      .range(from, from + SUPABASE_PAGE_SIZE - 1);
-    if (sucursalId) query = query.eq('sucursal_id', sucursalId);
-    const { data, error } = await query;
-    if (error) throw error;
-    rows = [...rows, ...((Array.isArray(data) ? data : []) as unknown as Array<{ producto_id: string | number; imagen_url?: string }>)];
-    if (!data || data.length < SUPABASE_PAGE_SIZE) break;
-    from += SUPABASE_PAGE_SIZE;
+  for (const chunk of chunkArray(uniqueIds(ids))) {
+    let from = 0;
+    while (true) {
+      let query = supabase
+        .from('producto_imagenes')
+        .select('producto_id, imagen_url')
+        .in('producto_id', chunk)
+        .range(from, from + SUPABASE_PAGE_SIZE - 1);
+      if (sucursalId) query = query.eq('sucursal_id', sucursalId);
+      const { data, error } = await query;
+      if (error) throw error;
+      rows = [...rows, ...((Array.isArray(data) ? data : []) as unknown as Array<{ producto_id: string | number; imagen_url?: string }>)];
+      if (!data || data.length < SUPABASE_PAGE_SIZE) break;
+      from += SUPABASE_PAGE_SIZE;
+    }
   }
   return rows;
 }
@@ -110,26 +125,48 @@ function getEffectiveVariantStock(variant: { stock?: number | null; stock_decima
 }
 
 async function enriquecerUnidades(productos: Producto[], sucursalId?: string) {
-  const ids = productos.map((p) => p.user_id).filter(Boolean);
+  const ids = uniqueIds(productos.map((p) => p.user_id).filter(Boolean));
   if (ids.length === 0) return productos;
 
-  let productosQuery = supabase
-      .from('productos')
-      .select('user_id, unidad_base, unidades_alternativas, factor_conversion, stock')
-      .in('user_id', ids);
-  let variantesQuery = supabase
-      .from('producto_variantes')
-      .select('producto_id, id, color, stock, stock_decimal, precio, sku, imagen_url')
-      .in('producto_id', ids);
-  if (sucursalId) {
-    productosQuery = productosQuery.eq('sucursal_id', sucursalId);
-    variantesQuery = variantesQuery.eq('sucursal_id', sucursalId);
+  const productRows: Array<{
+    user_id: string | number;
+    unidad_base?: string;
+    unidades_alternativas?: string[];
+    factor_conversion?: number;
+    stock?: number;
+  }> = [];
+  const variantRowsAll: Array<{
+    producto_id: string | number;
+    id?: number;
+    color?: string;
+    stock?: number;
+    stock_decimal?: number;
+    precio?: number;
+    sku?: string;
+    imagen_url?: string;
+  }> = [];
+
+  for (const chunk of chunkArray(ids)) {
+    let productosQuery = supabase
+        .from('productos')
+        .select('user_id, unidad_base, unidades_alternativas, factor_conversion, stock')
+        .in('user_id', chunk);
+    let variantesQuery = supabase
+        .from('producto_variantes')
+        .select('producto_id, id, color, stock, stock_decimal, precio, sku, imagen_url')
+        .in('producto_id', chunk);
+    if (sucursalId) {
+      productosQuery = productosQuery.eq('sucursal_id', sucursalId);
+      variantesQuery = variantesQuery.eq('sucursal_id', sucursalId);
+    }
+
+    const [{ data }, { data: variantRows }] = await Promise.all([productosQuery, variantesQuery]);
+    productRows.push(...((Array.isArray(data) ? data : []) as typeof productRows));
+    variantRowsAll.push(...((Array.isArray(variantRows) ? variantRows : []) as typeof variantRowsAll));
   }
 
-  const [{ data }, { data: variantRows }] = await Promise.all([productosQuery, variantesQuery]);
-
   const byId = new Map(
-    (Array.isArray(data) ? data : []).map((row) => [
+    productRows.map((row) => [
       String(row.user_id),
       {
         unidad_base: String(row.unidad_base || '').trim() || 'unidad',
@@ -139,7 +176,7 @@ async function enriquecerUnidades(productos: Producto[], sucursalId?: string) {
       }
     ])
   );
-  const variantsByProductId = (Array.isArray(variantRows) ? variantRows : []).reduce<Record<string, Producto['variantes']>>((acc, row) => {
+  const variantsByProductId = variantRowsAll.reduce<Record<string, Producto['variantes']>>((acc, row) => {
     const key = String(row.producto_id);
     if (!acc[key]) acc[key] = [];
     const effectiveStock = getEffectiveVariantStock(row);
