@@ -44,6 +44,8 @@ interface VarianteBusqueda {
   sku?: string;
 }
 
+const SUPABASE_PAGE_SIZE = 1000;
+
 // simple util to group images by producto_id
 function agruparImagenes(imgs: Array<{ producto_id: string | number; imagen_url?: string }>) {
   const out: Record<string, string[]> = {};
@@ -53,6 +55,43 @@ function agruparImagenes(imgs: Array<{ producto_id: string | number; imagen_url?
     if (i.imagen_url) out[id].push(i.imagen_url);
   });
   return out;
+}
+
+async function fetchAllCatalogRows(selectFields: string, sucursalId?: string) {
+  let rows: Array<Record<string, unknown>> = [];
+  let from = 0;
+  while (true) {
+    let query = supabase
+      .from('v_productos_catalogo')
+      .select(selectFields)
+      .range(from, from + SUPABASE_PAGE_SIZE - 1);
+    if (sucursalId) query = query.eq('sucursal_id', sucursalId);
+    const { data, error } = await query;
+    if (error) throw error;
+    rows = [...rows, ...((Array.isArray(data) ? data : []) as unknown as Array<Record<string, unknown>>)];
+    if (!data || data.length < SUPABASE_PAGE_SIZE) break;
+    from += SUPABASE_PAGE_SIZE;
+  }
+  return rows;
+}
+
+async function fetchImagesForProductIds(ids: Array<string | number>, sucursalId?: string) {
+  let rows: Array<{ producto_id: string | number; imagen_url?: string }> = [];
+  let from = 0;
+  while (true) {
+    let query = supabase
+      .from('producto_imagenes')
+      .select('producto_id, imagen_url')
+      .in('producto_id', ids)
+      .range(from, from + SUPABASE_PAGE_SIZE - 1);
+    if (sucursalId) query = query.eq('sucursal_id', sucursalId);
+    const { data, error } = await query;
+    if (error) throw error;
+    rows = [...rows, ...((Array.isArray(data) ? data : []) as unknown as Array<{ producto_id: string | number; imagen_url?: string }>)];
+    if (!data || data.length < SUPABASE_PAGE_SIZE) break;
+    from += SUPABASE_PAGE_SIZE;
+  }
+  return rows;
 }
 
 function buildUnidadesDisponibles(unidadBase?: string, unidadesAlternativas?: string[]) {
@@ -156,15 +195,10 @@ export function useProductos(_includeCost = false, sucursalId?: string) {
 
   const fetchProductos = useCallback(async () => {
     const selectFields = 'producto_id, nombre, precio_base, stock_total, codigo_barra, categoria, category_id, variantes';
-    let query = supabase
-      .from('v_productos_catalogo')
-      .select(selectFields)
-      .limit(1000);
-    if (sucursalId) query = query.eq('sucursal_id', sucursalId);
-    const { data, error } = await query;
-    if (!error && data) {
+    try {
+      const data = await fetchAllCatalogRows(selectFields, sucursalId);
       const productosBase = Array.isArray(data)
-        ? (data as Array<Record<string, unknown>>).map((p) => {
+        ? data.map((p) => {
             const variantes = Array.isArray(p.variantes)
               ? (p.variantes as Producto['variantes'])
               : [];
@@ -188,14 +222,12 @@ export function useProductos(_includeCost = false, sucursalId?: string) {
       setProductos(productosData);
       const ids = productosData.map(p => p.user_id).filter(Boolean);
       if (ids.length) {
-        let imgsQuery = supabase
-          .from('producto_imagenes')
-          .select('producto_id, imagen_url')
-          .in('producto_id', ids);
-        if (sucursalId) imgsQuery = imgsQuery.eq('sucursal_id', sucursalId);
-        const { data: imgs } = await imgsQuery;
+        const imgs = await fetchImagesForProductIds(ids, sucursalId);
         if (Array.isArray(imgs)) setImagenes(agruparImagenes(imgs));
       }
+    } catch {
+      setProductos([]);
+      setImagenes({});
     }
     setLoading(false);
   }, [sucursalId]);
@@ -355,12 +387,7 @@ export function useProductos(_includeCost = false, sucursalId?: string) {
       // cargar imágenes para resultados
       const ids = resultados.map(r => r.user_id).filter(Boolean);
       if (ids.length) {
-        let imgsQuery = supabase
-          .from('producto_imagenes')
-          .select('producto_id, imagen_url')
-          .in('producto_id', ids);
-        if (sucursalId) imgsQuery = imgsQuery.eq('sucursal_id', sucursalId);
-        const { data: imgs } = await imgsQuery;
+        const imgs = await fetchImagesForProductIds(ids, sucursalId);
         if (Array.isArray(imgs)) {
           setImagenes(prev => ({ ...prev, ...agruparImagenes(imgs) }));
         }
