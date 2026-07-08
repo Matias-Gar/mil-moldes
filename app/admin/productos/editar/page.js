@@ -13,6 +13,55 @@ import { registrarHistorialProducto } from "@/lib/productosHistorial";
 import { sincronizarStockProducto, validarProducto } from "@/lib/utils";
 import { getProductViewMeta, normalizeProductView } from "@/lib/productViews";
 import { useSucursalActiva } from "@/components/admin/SucursalContext";
+import { optimizeImageForUpload } from "@/lib/imageUploadOptimization";
+
+const BUCKET_NAME = "product_images";
+const SUPABASE_PAGE_SIZE = 1000;
+
+const isFileImage = (value) =>
+  typeof File !== "undefined" && value instanceof File;
+
+const getImageUrl = (image) => {
+  if (!image) return "";
+  if (typeof image === "string") return image;
+  if (isFileImage(image)) return "";
+  return image.imagen_url || "";
+};
+
+const uploadProductImages = async (files) => {
+  const uploadTasks = Array.from(files || []).map(async (file) => {
+    if (!isFileImage(file)) return getImageUrl(file);
+
+    const { file: preparedFile } = await optimizeImageForUpload(file);
+    const safeName = preparedFile.name
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9._-]/g, "_");
+    const filePath = `${Date.now()}-${Math.random().toString(36).slice(2)}-${safeName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(filePath, preparedFile, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: preparedFile.type || "image/jpeg",
+      });
+
+    if (uploadError) {
+      throw new Error(`Error al subir imagen a storage (Bucket: ${BUCKET_NAME}): ${uploadError.message}`);
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from(BUCKET_NAME)
+      .getPublicUrl(filePath);
+
+    return publicUrlData.publicUrl;
+  });
+
+  return (await Promise.all(uploadTasks)).filter(
+    (url) => typeof url === "string" && url.trim().length > 0 && url.startsWith("http")
+  );
+};
 
 export default function EditarCatalogo() {
     const { activeSucursalId } = useSucursalActiva();
@@ -35,13 +84,30 @@ export default function EditarCatalogo() {
           const { data: productosData, error: productosError } = await productosQuery;
           if (productosError) throw productosError;
 
+          const productIds = (productosData || [])
+            .map((p) => p.user_id)
+            .filter((id) => id !== undefined && id !== null);
+
           // Imágenes
-          let imagenesQuery = supabase
-            .from("producto_imagenes")
-            .select("id, producto_id, imagen_url");
-          if (activeSucursalId) imagenesQuery = imagenesQuery.eq("sucursal_id", activeSucursalId);
-          const { data: imagenesData, error: imagenesError } = await imagenesQuery;
-          if (imagenesError) throw imagenesError;
+          let imagenesData = [];
+          if (productIds.length > 0) {
+            let from = 0;
+            while (true) {
+              let imagenesQuery = supabase
+                .from("producto_imagenes")
+                .select("id, producto_id, imagen_url, sucursal_id")
+                .in("producto_id", productIds);
+              if (activeSucursalId) imagenesQuery = imagenesQuery.eq("sucursal_id", activeSucursalId);
+              imagenesQuery = imagenesQuery
+                .order("id", { ascending: true })
+                .range(from, from + SUPABASE_PAGE_SIZE - 1);
+              const { data, error: imagenesError } = await imagenesQuery;
+              if (imagenesError) throw imagenesError;
+              imagenesData = [...imagenesData, ...(data || [])];
+              if (!data || data.length < SUPABASE_PAGE_SIZE) break;
+              from += SUPABASE_PAGE_SIZE;
+            }
+          }
 
           // Variantes
           let variantesQuery = supabase
@@ -62,10 +128,23 @@ export default function EditarCatalogo() {
           // Asociar imágenes y variantes a cada producto
           const imgs = {};
           const vars = {};
+          const imagesByProductId = (imagenesData || []).reduce((acc, img) => {
+            const imageKey = String(img.producto_id);
+            if (!acc[imageKey]) acc[imageKey] = [];
+            acc[imageKey].push(img);
+            return acc;
+          }, {});
           (productosData || []).forEach((p) => {
             const key = getProductKey(p);
-            imgs[key] = (imagenesData || []).filter(img => img.producto_id === p.user_id);
-            vars[key] = (variantesData || []).filter(v => v.producto_id === p.user_id);
+            const productImages = imagesByProductId[String(p.user_id)] || [];
+            const baseImageUrl = String(p.imagen_url || "").trim();
+            const hasBaseImageInGallery = productImages.some((img) => img.imagen_url === baseImageUrl);
+            imgs[key] = baseImageUrl && baseImageUrl !== "/sin-imagen.png" && !hasBaseImageInGallery
+              ? [{ id: `base-${p.user_id}`, producto_id: p.user_id, imagen_url: baseImageUrl, isBaseImage: true }, ...productImages]
+              : productImages;
+            vars[key] = (variantesData || []).filter(
+              (v) => String(v.producto_id) === String(p.user_id)
+            );
           });
 
           setProductos(productosData || []);
@@ -136,70 +215,66 @@ export default function EditarCatalogo() {
 
     // Imágenes
     const handleAddImages = (productKey, files) => {
-      setImagenes((prev) => ({
-        ...prev,
-        [productKey]: [...(prev[productKey] || []), ...files],
-      }));
-      setEditando((prev) => ({
-        ...prev,
-        [productKey]: {
-          ...prev[productKey],
-          imagenes: [...((prev[productKey]?.imagenes) || []), ...files],
-        },
-      }));
+      const nextFiles = Array.from(files || []);
+      if (nextFiles.length === 0) return;
+      setImagenes((prev) => {
+        const nextImages = [...(prev[productKey] || []), ...nextFiles];
+        setEditando((editPrev) => ({
+          ...editPrev,
+          [productKey]: {
+            ...editPrev[productKey],
+            imagenes: nextImages,
+          },
+        }));
+        return { ...prev, [productKey]: nextImages };
+      });
     };
 
     const handleRemoveImage = (productKey, idx) => {
-      setImagenes((prev) => ({
-        ...prev,
-        [productKey]: (prev[productKey] || []).filter((_, i) => i !== idx),
-      }));
-      setEditando((prev) => ({
-        ...prev,
-        [productKey]: {
-          ...prev[productKey],
-          imagenes: (prev[productKey]?.imagenes || []).filter((_, i) => i !== idx),
-        },
-      }));
+      setImagenes((prev) => {
+        const nextImages = (prev[productKey] || []).filter((_, i) => i !== idx);
+        setEditando((editPrev) => ({
+          ...editPrev,
+          [productKey]: {
+            ...editPrev[productKey],
+            imagenes: nextImages,
+          },
+        }));
+        return { ...prev, [productKey]: nextImages };
+      });
     };
 
     const handleReplaceImage = (productKey, idx, file) => {
+      if (!file) return;
       setImagenes((prev) => {
-        const arr = [...(prev[productKey] || [])];
-        arr[idx] = file;
-        return { ...prev, [productKey]: arr };
-      });
-      setEditando((prev) => {
-        const arr = [...((prev[productKey]?.imagenes) || [])];
-        arr[idx] = file;
-        return {
-          ...prev,
+        const nextImages = [...(prev[productKey] || [])];
+        nextImages[idx] = file;
+        setEditando((editPrev) => ({
+          ...editPrev,
           [productKey]: {
-            ...prev[productKey],
-            imagenes: arr,
+            ...editPrev[productKey],
+            imagenes: nextImages,
           },
-        };
+        }));
+        return { ...prev, [productKey]: nextImages };
       });
     };
 
     const handleReorderImages = (productKey, fromIdx, toIdx) => {
+      if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0) return;
       setImagenes((prev) => {
-        const arr = [...(prev[productKey] || [])];
-        const [moved] = arr.splice(fromIdx, 1);
-        arr.splice(toIdx, 0, moved);
-        return { ...prev, [productKey]: arr };
-      });
-      setEditando((prev) => {
-        const arr = [...((prev[productKey]?.imagenes) || [])];
-        const [moved] = arr.splice(fromIdx, 1);
-        arr.splice(toIdx, 0, moved);
-        return {
-          ...prev,
+        const nextImages = [...(prev[productKey] || [])];
+        if (!nextImages[fromIdx] || !nextImages[toIdx]) return prev;
+        const [moved] = nextImages.splice(fromIdx, 1);
+        nextImages.splice(toIdx, 0, moved);
+        setEditando((editPrev) => ({
+          ...editPrev,
           [productKey]: {
-            ...prev[productKey],
-            imagenes: arr,
+            ...editPrev[productKey],
+            imagenes: nextImages,
           },
-        };
+        }));
+        return { ...prev, [productKey]: nextImages };
       });
     };
 
@@ -253,13 +328,13 @@ export default function EditarCatalogo() {
 
       // Variantes e imágenes editadas
       const nuevasVariantes = cambios.variantes !== undefined ? cambios.variantes : variantes[prodId] || [];
-      const nuevasImagenes = cambios.imagenes !== undefined ? cambios.imagenes : imagenes[prodId] || [];
+      const nuevasImagenesRaw = cambios.imagenes !== undefined ? cambios.imagenes : imagenes[prodId] || [];
 
       const errores = validarProducto({
         nombre: cambios.nombre ?? productoActual?.nombre,
         descripcion: cambios.descripcion ?? productoActual?.descripcion,
         variantes: nuevasVariantes,
-        imagenes: nuevasImagenes,
+        imagenes: nuevasImagenesRaw,
       });
 
       if (errores.length > 0) {
@@ -271,12 +346,25 @@ export default function EditarCatalogo() {
 
       // 1. Actualizar producto (campos básicos, stock e imagen principal)
       const stockTotal = nuevasVariantes.reduce((acc, v) => acc + (parseDecimalInput(v.stock, 0) || 0), 0);
+      const uploadedUrls = await uploadProductImages(nuevasImagenesRaw.filter(isFileImage));
+      let uploadIndex = 0;
+      const nuevasImagenes = nuevasImagenesRaw
+        .map((img) => {
+          if (isFileImage(img)) {
+            const imagen_url = uploadedUrls[uploadIndex++];
+            return imagen_url ? { imagen_url } : null;
+          }
+          const imagen_url = getImageUrl(img);
+          return imagen_url ? { ...img, imagen_url } : null;
+        })
+        .filter(Boolean);
       // Determinar la imagen principal (primera del array de imágenes)
-      let imagenPrincipal = null;
-      if (nuevasImagenes.length > 0) {
-        const img = nuevasImagenes[0];
-        imagenPrincipal = img.imagen_url || img;
-      }
+      const selectedPrimaryUrl = getImageUrl(
+        nuevasImagenes.find((img) => String(img.id) === String(cambios.primaryImageId))
+      ) || cambios.primaryImageUrl;
+      const imagenPrincipal = nuevasImagenes.some((img) => getImageUrl(img) === selectedPrimaryUrl)
+        ? selectedPrimaryUrl
+        : getImageUrl(nuevasImagenes[0]);
       const updatePayload = {
         nombre: cambios.nombre ?? productoActual?.nombre,
         descripcion: cambios.descripcion ?? productoActual?.descripcion,
@@ -287,7 +375,7 @@ export default function EditarCatalogo() {
           : productoActual?.category_id ?? null,
         codigo_barra: cambios.codigo_barra ?? productoActual?.codigo_barra,
         stock: stockTotal,
-        imagen_url: imagenPrincipal || productoActual?.imagen_url || '/sin-imagen.png',
+        imagen_url: imagenPrincipal || null,
       };
 
       let updateQuery = supabase.from("productos").update(updatePayload);
@@ -346,9 +434,11 @@ export default function EditarCatalogo() {
 
       // 3. Sincronizar imágenes
       // Obtener imágenes actuales en BD
-      const { data: imagenesBD } = await supabase
+      let imagenesBDQuery = supabase
         .from("producto_imagenes")
         .select("id, producto_id, imagen_url").eq("producto_id", productoActual.user_id);
+      if (activeSucursalId) imagenesBDQuery = imagenesBDQuery.eq("sucursal_id", activeSucursalId);
+      const { data: imagenesBD } = await imagenesBDQuery;
       // Eliminar imágenes quitadas
       for (const imgBD of imagenesBD || []) {
         if (!nuevasImagenes.some(img => img.id === imgBD.id || img.imagen_url === imgBD.imagen_url)) {
@@ -357,11 +447,12 @@ export default function EditarCatalogo() {
       }
       // Insertar nuevas imágenes
       for (const img of nuevasImagenes) {
-        if (!img.id) {
+        const alreadyExists = (imagenesBD || []).some((imgBD) => imgBD.imagen_url === img.imagen_url);
+        if (!img.id && !alreadyExists) {
           await supabase.from("producto_imagenes").insert({
             producto_id: productoActual.user_id,
             sucursal_id: activeSucursalId || null,
-            imagen_url: img.imagen_url || img,
+            imagen_url: img.imagen_url,
           });
         }
       }
