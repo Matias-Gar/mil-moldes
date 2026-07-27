@@ -565,37 +565,6 @@ export default function CatalogoPage() {
 
     // --- Funciones del Carrito ---
 
-    // Función helper para obtener el precio final de un producto (con promoción si aplica)
-    const getPrecioFinal = (producto) => {
-        const promocion = promociones.find(function(promo) {
-            return (
-                promo.producto_id === producto.user_id &&
-                promo.activa === true &&
-                (!promo.fecha_fin || new Date(promo.fecha_fin) >= new Date())
-            );
-        });
-
-        if (!promocion) {
-            return producto.precio;
-        }
-
-        let precioFinal = producto.precio;
-        switch (promocion.tipo) {
-            case 'descuento':
-                precioFinal = producto.precio * (1 - promocion.valor / 100);
-                break;
-            case 'precio_fijo':
-                precioFinal = promocion.valor;
-                break;
-            case 'descuento_absoluto':
-                precioFinal = Math.max(0, producto.precio - promocion.valor);
-                break;
-            default:
-                precioFinal = producto.precio;
-        }
-        return Math.max(0, precioFinal);
-    };
-
     const getCartKey = (producto) => `prod:${String(producto.user_id)}:${String(producto.variante_id ?? 'default')}`;
 
     // Buscar producto en el carrito por id y variante
@@ -780,7 +749,7 @@ export default function CatalogoPage() {
             precio: varianteSeleccionada.precio
         };
 
-        const precioFinal = getPrecioFinal(productoConVariante);
+        const precioOriginal = Number(productoConVariante.precio || 0);
         const selectedUnit = String(unidad || productoConVariante.unidad_base || 'unidad');
         const quantity = normalizeQuantityForUnit(cantidad, selectedUnit);
         const unidadesVenta = getAvailableUnits(productoConVariante, stockDisponible);
@@ -831,7 +800,10 @@ export default function CatalogoPage() {
                 cantidad: quantity,
                 cantidad_display: quantity,
                 cantidad_base: requestedBaseQuantity,
-                precio: precioFinal
+                // El carrito conserva el precio base. getItemPricing aplica la
+                // promocion una sola vez al mostrar y guardar el pedido.
+                precio: precioOriginal,
+                precio_original: precioOriginal
             }];
         });
         setAddToCartModal(null);
