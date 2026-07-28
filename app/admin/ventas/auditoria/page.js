@@ -109,6 +109,7 @@ export default function AuditoriaStockPage() {
   const [detalles, setDetalles] = useState([]);
   const [variantes, setVariantes] = useState([]);
   const [movimientos, setMovimientos] = useState([]);
+  const [transferencias, setTransferencias] = useState([]);
   const [historial, setHistorial] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [loading, setLoading] = useState(true);
@@ -122,6 +123,10 @@ export default function AuditoriaStockPage() {
       .sort((a, b) => String(a.color || "").localeCompare(String(b.color || ""), "es", { sensitivity: "base" }));
     const ventasProducto = detalles.filter((d) => String(d.producto_id) === String(producto.user_id));
     const movimientosProducto = movimientos.filter((m) => String(m.producto_id) === String(producto.user_id));
+    const transferenciasProducto = transferencias.filter((t) => (
+      (String(t.sucursal_origen_id) === String(activeSucursalId) && String(t.producto_origen_id) === String(producto.user_id)) ||
+      (String(t.sucursal_destino_id) === String(activeSucursalId) && String(t.producto_destino_id) === String(producto.user_id))
+    ));
     const converted = hasConversion(producto);
     const hasVariants = vars.length > 0;
 
@@ -137,12 +142,14 @@ export default function AuditoriaStockPage() {
     const salidasMovimientos = movimientosProducto.filter((m) => isSalida(m.tipo)).reduce((sum, m) => sum + qtyBase(m), 0);
     const ventasTotalDetalle = ventasProducto.reduce((sum, d) => sum + qtyBase(d), 0);
     const salidas = salidasMovimientos > 0 ? salidasMovimientos : ventasTotalDetalle;
-    const transferenciasEntrada = movimientosProducto
-      .filter((m) => isTransferenciaEntrada(m.tipo))
-      .reduce((sum, m) => sum + qtyBase(m), 0);
-    const transferenciasSalida = movimientosProducto
-      .filter((m) => isTransferenciaSalida(m.tipo))
-      .reduce((sum, m) => sum + qtyBase(m), 0);
+    // La tabla de transferencias es la fuente canonica. Algunas transferencias
+    // antiguas de la sucursal origen no tienen su fila en stock_movimientos.
+    const transferenciasEntrada = transferenciasProducto
+      .filter((t) => String(t.sucursal_destino_id) === String(activeSucursalId))
+      .reduce((sum, t) => sum + qtyBase(t), 0);
+    const transferenciasSalida = transferenciasProducto
+      .filter((t) => String(t.sucursal_origen_id) === String(activeSucursalId))
+      .reduce((sum, t) => sum + qtyBase(t), 0);
     const transferencias = transferenciasEntrada - transferenciasSalida;
     const stockCalculadoTotal = stockInicialTotal + ingresos - salidas + transferencias;
     const diferenciaTotal = stockActualTotal - stockCalculadoTotal;
@@ -158,10 +165,13 @@ export default function AuditoriaStockPage() {
     const detallePorVariante = vars.map((v) => {
       const inicial = Number(v.stock_inicial_decimal ?? v.stock_inicial) || 0;
       const ventas = ventasPorVariante.find((row) => String(row.id) === String(v.id))?.ventas || 0;
-      const movimientosVariante = movimientosProducto.filter((m) => String(m.variante_id) === String(v.id));
-      const transferencias = movimientosVariante.reduce((sum, movimiento) => {
-        if (isTransferenciaEntrada(movimiento.tipo)) return sum + qtyBase(movimiento);
-        if (isTransferenciaSalida(movimiento.tipo)) return sum - qtyBase(movimiento);
+      const transferencias = transferenciasProducto.reduce((sum, transferencia) => {
+        if (String(transferencia.sucursal_destino_id) === String(activeSucursalId) && String(transferencia.variante_destino_id) === String(v.id)) {
+          return sum + qtyBase(transferencia);
+        }
+        if (String(transferencia.sucursal_origen_id) === String(activeSucursalId) && String(transferencia.variante_origen_id) === String(v.id)) {
+          return sum - qtyBase(transferencia);
+        }
         return sum;
       }, 0);
       const actual = stockValue(v);
@@ -198,7 +208,27 @@ export default function AuditoriaStockPage() {
   const getEventos = (productoId, productoForFormat = selected) => {
     const eventos = [];
 
+    transferencias.forEach((t) => {
+      const isOut = String(t.sucursal_origen_id) === String(activeSucursalId) && String(t.producto_origen_id) === String(productoId);
+      const isIn = String(t.sucursal_destino_id) === String(activeSucursalId) && String(t.producto_destino_id) === String(productoId);
+      if (!isOut && !isIn) return;
+
+      eventos.push({
+        tipo: isOut ? "transferencia_salida" : "transferencia_entrada",
+        fecha: t.created_at,
+        usuario: t.usuario_email,
+        variante: isOut ? t.variante_origen_id : t.variante_destino_id,
+        cantidad: t.cantidad,
+        cantidad_base: t.cantidad_base,
+        unidad: t.unidad,
+        observaciones: t.observaciones || "",
+        textoCantidad: formatEventQuantity(productoForFormat, t),
+      });
+    });
+
     movimientos.filter((m) => String(m.producto_id) === String(productoId)).forEach((m) => {
+      // Ya se agregan desde transferencias_sucursal para evitar duplicados.
+      if (isTransferenciaEntrada(m.tipo) || isTransferenciaSalida(m.tipo)) return;
       eventos.push({
         tipo: m.tipo,
         fecha: m.created_at,
@@ -216,6 +246,7 @@ export default function AuditoriaStockPage() {
     });
 
     historial.filter((h) => String(h.producto_id) === String(productoId)).forEach((h) => {
+      if (["TRANSFER_IN", "TRANSFER_OUT"].includes(String(h.accion || "").toUpperCase())) return;
       eventos.push({
         tipo: h.accion,
         fecha: h.fecha,
@@ -245,17 +276,22 @@ export default function AuditoriaStockPage() {
     async function fetchData() {
       setLoading(true);
       const scopeSucursal = (query) => activeSucursalId ? query.eq("sucursal_id", activeSucursalId) : query;
-      const [prodsRes, detsRes, varsRes, movsRes] = await Promise.all([
+      const transfersQuery = activeSucursalId
+        ? supabase.from("transferencias_sucursal").select("*").or(`sucursal_origen_id.eq.${activeSucursalId},sucursal_destino_id.eq.${activeSucursalId}`)
+        : supabase.from("transferencias_sucursal").select("*");
+      const [prodsRes, detsRes, varsRes, movsRes, transfersRes] = await Promise.all([
         scopeSucursal(supabase.from("productos").select("user_id, nombre, stock, stock_inicial, unidad_base, unidades_alternativas, factor_conversion")),
         scopeSucursal(supabase.from("ventas_detalle").select("producto_id, cantidad, cantidad_base, unidad, variante_id, created_at, usuario_email")),
         scopeSucursal(supabase.from("producto_variantes").select("*")),
         scopeSucursal(supabase.from("stock_movimientos").select("*")),
+        transfersQuery,
       ]);
 
       setProductos(prodsRes.data || []);
       setDetalles(detsRes.data || []);
       setVariantes(varsRes.data || []);
       setMovimientos(movsRes.data || []);
+      setTransferencias(transfersRes.data || []);
       setLoading(false);
     }
 
@@ -289,7 +325,7 @@ export default function AuditoriaStockPage() {
       : productos;
     return base.map(auditarProducto);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productos, variantes, detalles, movimientos, busqueda, historial]);
+  }, [productos, variantes, detalles, movimientos, transferencias, busqueda, historial, activeSucursalId]);
 
   const alertas = auditoria.filter((p) => statusForDifference(p.diferencia) === "revisar");
   const okCount = auditoria.length - alertas.length;
