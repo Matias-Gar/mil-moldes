@@ -9,20 +9,9 @@ import { useSucursalActiva } from "../../../../components/admin/SucursalContext"
 
 export default function StockPage() {
   const { activeSucursalId } = useSucursalActiva();
-    // --- Mover funciones dependientes arriba para evitar ReferenceError ---
-    const getStockMinimo = useCallback((prod) => {
-      return Number(prod?.stock_minimo ?? CONFIG.INVENTARIO.STOCK_MINIMO_ALERTA ?? 3);
-    }, []);
-
-    // Calcular el stock como la suma de los stocks de las variantes si existen
-    const getStockState = useCallback((prod) => {
-      const stock = getBaseStock(prod);
-      const stockMinimo = getStockMinimo(prod);
-      if (stock <= 0) return "sin-stock";
-      if (stock <= Math.min(stockMinimo, 2)) return "critico";
-      if (stock <= stockMinimo) return "bajo";
-      return "normal";
-    }, [getStockMinimo]);
+  const getStockMinimo = useCallback((prod) => {
+    return Number(prod?.stock_minimo ?? CONFIG.INVENTARIO.STOCK_MINIMO_ALERTA ?? 3);
+  }, []);
 
   const PAGE_SIZE = 30;
   const [productos, setProductos] = useState([]);
@@ -270,6 +259,17 @@ export default function StockPage() {
     }
     return productStock;
   }
+
+  // Se declara despues de getBaseStock para que React no intente acceder a esa
+  // funcion antes de inicializarla al entrar a la pantalla.
+  const getStockState = useCallback((prod) => {
+    const stock = getBaseStock(prod);
+    const stockMinimo = getStockMinimo(prod);
+    if (stock <= 0) return "sin-stock";
+    if (stock <= Math.min(stockMinimo, 2)) return "critico";
+    if (stock <= stockMinimo) return "bajo";
+    return "normal";
+  }, [getStockMinimo]);
 
   function getReadableStock(prod, stockInput = null) {
     const stockBase = Math.max(0, Number(stockInput ?? getBaseStock(prod)) || 0);

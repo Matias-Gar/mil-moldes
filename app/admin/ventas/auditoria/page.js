@@ -109,7 +109,7 @@ export default function AuditoriaStockPage() {
   const [detalles, setDetalles] = useState([]);
   const [variantes, setVariantes] = useState([]);
   const [movimientos, setMovimientos] = useState([]);
-  const [transferencias, setTransferencias] = useState([]);
+  const [transferenciasSucursal, setTransferenciasSucursal] = useState([]);
   const [historial, setHistorial] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [loading, setLoading] = useState(true);
@@ -123,7 +123,7 @@ export default function AuditoriaStockPage() {
       .sort((a, b) => String(a.color || "").localeCompare(String(b.color || ""), "es", { sensitivity: "base" }));
     const ventasProducto = detalles.filter((d) => String(d.producto_id) === String(producto.user_id));
     const movimientosProducto = movimientos.filter((m) => String(m.producto_id) === String(producto.user_id));
-    const transferenciasProducto = transferencias.filter((t) => (
+    const transferenciasProducto = transferenciasSucursal.filter((t) => (
       (String(t.sucursal_origen_id) === String(activeSucursalId) && String(t.producto_origen_id) === String(producto.user_id)) ||
       (String(t.sucursal_destino_id) === String(activeSucursalId) && String(t.producto_destino_id) === String(producto.user_id))
     ));
@@ -208,7 +208,7 @@ export default function AuditoriaStockPage() {
   const getEventos = (productoId, productoForFormat = selected) => {
     const eventos = [];
 
-    transferencias.forEach((t) => {
+    transferenciasSucursal.forEach((t) => {
       const isOut = String(t.sucursal_origen_id) === String(activeSucursalId) && String(t.producto_origen_id) === String(productoId);
       const isIn = String(t.sucursal_destino_id) === String(activeSucursalId) && String(t.producto_destino_id) === String(productoId);
       if (!isOut && !isIn) return;
@@ -291,7 +291,7 @@ export default function AuditoriaStockPage() {
       setDetalles(detsRes.data || []);
       setVariantes(varsRes.data || []);
       setMovimientos(movsRes.data || []);
-      setTransferencias(transfersRes.data || []);
+      setTransferenciasSucursal(transfersRes.data || []);
       setLoading(false);
     }
 
@@ -325,7 +325,7 @@ export default function AuditoriaStockPage() {
       : productos;
     return base.map(auditarProducto);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productos, variantes, detalles, movimientos, transferencias, busqueda, historial, activeSucursalId]);
+  }, [productos, variantes, detalles, movimientos, transferenciasSucursal, busqueda, historial, activeSucursalId]);
 
   const alertas = auditoria.filter((p) => statusForDifference(p.diferencia) === "revisar");
   const okCount = auditoria.length - alertas.length;
