@@ -200,6 +200,12 @@ export default function AuditoriaStockPage() {
             return sum;
           }, 0)
         : 0;
+      const transferenciaPositiva = fuenteVariante.length > 0
+        ? fuenteVariante.filter((m) => isTransferenciaEntrada(m.tipo)).reduce((sum, m) => sum + qtyBase(m), 0)
+        : transferenciasProducto.filter((t) => String(t.sucursal_destino_id) === String(activeSucursalId) && String(t.variante_destino_id) === String(v.id)).reduce((sum, t) => sum + qtyBase(t), 0);
+      const transferenciaNegativa = fuenteVariante.length > 0
+        ? fuenteVariante.filter((m) => isTransferenciaSalida(m.tipo)).reduce((sum, m) => sum + qtyBase(m), 0)
+        : transferenciasProducto.filter((t) => String(t.sucursal_origen_id) === String(activeSucursalId) && String(t.variante_origen_id) === String(v.id)).reduce((sum, t) => sum + qtyBase(t), 0);
       const actual = stockValue(v);
       const reconciliacionVariante = reconciliacionProducto.find((r) => String(r.variante_id) === String(v.id));
       const calculado = reconciliacionVariante ? Number(reconciliacionVariante.stock_reconstruido || 0) : inicial - ventas + transferencias;
@@ -209,6 +215,8 @@ export default function AuditoriaStockPage() {
         inicial,
         ventas,
         transferencias,
+        transferenciaPositiva,
+        transferenciaNegativa,
         actual,
         calculado,
         diferencia: actual - calculado,
@@ -224,6 +232,8 @@ export default function AuditoriaStockPage() {
       salidas,
       ventas: ventasTotalDetalle,
       transferencias,
+      transferenciaPositiva: transferenciasEntrada,
+      transferenciaNegativa: transferenciasSalida,
       stockActual: stockActualTotal,
       stockCalculado: stockCalculadoTotal,
       diferencia: diferenciaTotal,
@@ -421,14 +431,15 @@ export default function AuditoriaStockPage() {
           <div className="mt-5">
             <h3 className="font-black">Detalle por color</h3>
             <div className="mt-2 overflow-x-auto">
-              <table className="w-full min-w-[860px] text-sm">
+              <table className="w-full min-w-[1040px] text-sm">
                 <thead className="bg-white text-left">
                   <tr>
                     <th className="px-3 py-2">Color</th>
                     <th className="px-3 py-2">Actual</th>
                     <th className="px-3 py-2">Calculado</th>
                     <th className="px-3 py-2">Ventas</th>
-                    <th className="px-3 py-2">Transferencias</th>
+                    <th className="px-3 py-2 text-emerald-700">Transferencia positiva</th>
+                    <th className="px-3 py-2 text-red-700">Transferencia negativa</th>
                     <th className="px-3 py-2">Diferencia</th>
                   </tr>
                 </thead>
@@ -439,7 +450,8 @@ export default function AuditoriaStockPage() {
                       <td className="px-3 py-2">{formatQuantity(product, v.actual)}</td>
                       <td className="px-3 py-2">{formatQuantity(product, v.calculado)}</td>
                       <td className="px-3 py-2">{formatQuantity(product, v.ventas, { compact: true })}</td>
-                      <td className="px-3 py-2">{formatQuantity(product, v.transferencias, { compact: true })}</td>
+                      <td className="px-3 py-2 font-bold text-emerald-700">+{formatQuantity(product, v.transferenciaPositiva, { compact: true })}</td>
+                      <td className="px-3 py-2 font-bold text-red-700">-{formatQuantity(product, v.transferenciaNegativa, { compact: true })}</td>
                       <td className={`px-3 py-2 font-black ${statusForDifference(v.diferencia) === "ok" ? "text-emerald-700" : "text-red-700"}`}>
                         {formatQuantity(product, v.diferencia, { compact: true })}
                       </td>
@@ -572,7 +584,7 @@ export default function AuditoriaStockPage() {
             </section>
 
             <section className="overflow-x-auto rounded-lg bg-white shadow">
-              <table className="w-full min-w-[1080px] text-left text-sm">
+              <table className="w-full min-w-[1240px] text-left text-sm">
                 <thead className="bg-slate-900 text-white">
                   <tr>
                     <th className="px-3 py-3">Estado</th>
@@ -583,13 +595,14 @@ export default function AuditoriaStockPage() {
                     <th className="px-3 py-3">Entradas</th>
                     <th className="px-3 py-3">Salidas</th>
                     <th className="px-3 py-3">Ventas</th>
-                    <th className="px-3 py-3">Transferencias</th>
+                    <th className="px-3 py-3">Transferencia positiva</th>
+                    <th className="px-3 py-3">Transferencia negativa</th>
                   </tr>
                 </thead>
                 <tbody>
                   {auditoria.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-3 py-8 text-center text-slate-500">No se encontraron productos.</td>
+                      <td colSpan={10} className="px-3 py-8 text-center text-slate-500">No se encontraron productos.</td>
                     </tr>
                   ) : auditoria.map((p) => {
                     const status = statusForDifference(p.diferencia);
@@ -617,11 +630,12 @@ export default function AuditoriaStockPage() {
                           <td className="px-3 py-3">{formatQuantity(p, p.ingresos, { compact: true })}</td>
                           <td className="px-3 py-3">{formatQuantity(p, p.salidas, { compact: true })}</td>
                           <td className="px-3 py-3">{formatQuantity(p, p.ventas, { compact: true })}</td>
-                          <td className="px-3 py-3 font-bold">{formatQuantity(p, p.transferencias, { compact: true })}</td>
+                          <td className="px-3 py-3 font-bold text-emerald-700">+{formatQuantity(p, p.transferenciaPositiva, { compact: true })}</td>
+                          <td className="px-3 py-3 font-bold text-red-700">-{formatQuantity(p, p.transferenciaNegativa, { compact: true })}</td>
                         </tr>
                         {isExpanded && (
                           <tr>
-                            <td colSpan={9} className="bg-white px-3 py-4">
+                            <td colSpan={10} className="bg-white px-3 py-4">
                               {renderAuditDetails(selectedAudit)}
                             </td>
                           </tr>
