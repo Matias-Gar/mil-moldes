@@ -25,7 +25,7 @@ function formatQuantity(value) {
 function getEffectiveVariantStock(variant) {
   const decimal = Number(variant?.stock_decimal);
   const legacy = Number(variant?.stock);
-  return Math.max(0, Number.isFinite(decimal) && decimal > 0 ? decimal : legacy || 0);
+  return Math.max(0, Number.isFinite(decimal) ? decimal : legacy || 0);
 }
 
 function getUnitInfo(product) {
@@ -124,6 +124,7 @@ function isMissingSchemaError(error, fields = []) {
 export default function TransferenciaSucursalPage() {
   const { activeSucursalId, activeSucursal, sucursales, loading: sucursalesLoading } = useSucursalActiva();
   const scanRef = useRef(null);
+  const transferIdempotencyKeyRef = useRef(null);
 
   const [productos, setProductos] = useState([]);
   const [variantesByProducto, setVariantesByProducto] = useState({});
@@ -389,6 +390,7 @@ export default function TransferenciaSucursalPage() {
         p_usuario_id: user?.id || null,
         p_usuario_email: user?.email || "",
         p_observaciones: motivo || null,
+        p_idempotency_key: transferIdempotencyKeyRef.current ||= crypto.randomUUID(),
       };
 
       const { error } = await supabase.rpc("transferir_stock_sucursal", rpcPayload);
@@ -408,6 +410,7 @@ export default function TransferenciaSucursalPage() {
       setCantidad("");
       setMotivo("");
       setSelectedItem(null);
+      transferIdempotencyKeyRef.current = null;
       setSearch("");
       await fetchData();
       await fetchRecentTransfers();

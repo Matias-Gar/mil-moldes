@@ -9,11 +9,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { getOptimizedImageUrl, buildImageSrcSet } from '../../../../lib/imageOptimization';
 import { optimizeImageForUpload } from '../../../../lib/imageUploadOptimization';
 
-import { registrarMovimientoStock } from '../../../../lib/stockMovimientos';
 import { registrarHistorialProducto } from '../../../../lib/productosHistorial';
+import { registrarMovimientoStock } from '../../../../lib/stockMovimientos';
 import { canAccessAdminPath } from '../../../../lib/adminPermissions';
 
-import { sincronizarStockProducto } from '../../../../lib/utils';
+import * as ventasService from '../../../../services/ventas.service';
 import { getProductViewMeta, normalizeProductView } from '../../../../lib/productViews';
 import { useSucursalActiva } from '../../../../components/admin/SucursalContext';
 
@@ -1568,7 +1568,7 @@ export default function AdminProductosPage() {
                 descripcion: newProduct.descripcion,
                 precio: parseFloat(newProduct.precio) || 0,
                 precio_compra: parseFloat(newProduct.precio_compra) || 0,
-                stock: stockTotal,
+                stock: 0,
                 category_id: categoryIdValue,
                 codigo_barra: codigoBarra,
                 imagen_url: null,
@@ -1644,10 +1644,10 @@ export default function AdminProductosPage() {
                 const finalVariants = variantsPayload.map((v) => ({
                     producto_id: productoId,
                     color: v.color,
-                    stock: Math.max(0, Math.floor(Number(v.stock) || 0)),
-                    stock_decimal: Number(v.stock) || 0,
-                    stock_inicial: Math.max(0, Math.floor(Number(v.stock) || 0)),
-                    stock_inicial_decimal: Number(v.stock) || 0,
+                    stock: 0,
+                    stock_decimal: 0,
+                    stock_inicial: 0,
+                    stock_inicial_decimal: 0,
                     precio: v.precio,
                     sku: v.sku,
                     imagen_url: null,
@@ -1659,8 +1659,23 @@ export default function AdminProductosPage() {
                     throw new Error(`Error al insertar variantes: ${variantsError.message}`);
                 }
 
-                // --- Sincronizar stock del producto como suma de variantes ---
-                await sincronizarStockProducto(productoId, supabase);
+                const { data: insertedVariants, error: insertedVariantsError } = await supabase
+                    .from('producto_variantes').select('id,color,sku').eq('producto_id', productoId);
+                if (insertedVariantsError) throw insertedVariantsError;
+                const user = (await supabase.auth.getUser())?.data?.user;
+                for (const draft of variantsPayload) {
+                    const initial = Number(draft.stock) || 0;
+                    if (initial <= 0) continue;
+                    const inserted = (insertedVariants || []).find((row) => row.color === draft.color && row.sku === draft.sku);
+                    if (!inserted) throw new Error(`No se encontró la variante creada ${draft.color}`);
+                    const { error: increaseError } = await ventasService.aumentarStockCompleto({
+                        producto_id: productoId, variante_id: inserted.id, cantidad: initial,
+                        unidad: unidadBaseNormalizada, usuario_id: user?.id || null,
+                        usuario_email: user?.email || '', sucursal_id: activeSucursalId || null,
+                        observaciones: `Stock inicial auditado para variante ${draft.color}`,
+                    });
+                    if (increaseError) throw increaseError;
+                }
             }
 
             // Registrar movimiento de creación en stock_movimientos y historial
@@ -1750,43 +1765,27 @@ export default function AdminProductosPage() {
     const confirmDelete = async () => {
         if (!productToDelete) return;
 
+        // Compatibilidad con el modal histórico: desde el blindaje nunca se
+        // borran productos ni su ledger; esta acción solo archiva.
         setShowDeleteModal(false);
         setIsDeleting(true);
         setMessage('');
-
         try {
-            // 1. Eliminar movimientos de stock relacionados
-            const { error: movError } = await supabase
-                .from('stock_movimientos')
-                .delete()
-                .eq('producto_id', productToDelete.user_id)
-                .eq(activeSucursalId ? 'sucursal_id' : 'producto_id', activeSucursalId || productToDelete.user_id);
-            if (movError) throw new Error('Error al eliminar movimientos de stock: ' + movError.message);
-
-            // 2. Eliminar historial de producto relacionado
-            const { error: histError } = await supabase
-                .from('productos_historial')
-                .delete()
-                .eq('producto_id', productToDelete.user_id)
-                .eq(activeSucursalId ? 'sucursal_id' : 'producto_id', activeSucursalId || productToDelete.user_id);
-            if (histError) throw new Error('Error al eliminar historial: ' + histError.message);
-
-            // 3. Eliminar el producto (la eliminacion en cascada deberia manejar imagenes y variantes)
-            let deleteProductQuery = supabase
-                .from('productos')
-                .delete()
-                .eq('user_id', productToDelete.user_id);
-            if (activeSucursalId) deleteProductQuery = deleteProductQuery.eq('sucursal_id', activeSucursalId);
-            const { error } = await deleteProductQuery;
-
-            if (error) {
-                throw new Error(error.message);
-            }
-
-            setMessage(`Producto "${productToDelete.nombre}" eliminado con exito.`);
+            const user = (await supabase.auth.getUser())?.data?.user;
+            let archiveQuery = supabase.from('productos').update({
+                archivado: true,
+                archivado_at: new Date().toISOString(),
+                archivado_por: user?.id || null,
+                archivado_motivo: 'Archivado desde alta/gestión de productos',
+            }).eq('user_id', productToDelete.user_id);
+            if (activeSucursalId) archiveQuery = archiveQuery.eq('sucursal_id', activeSucursalId);
+            const { error } = await archiveQuery;
+            if (error) throw error;
+            await supabase.from('producto_variantes').update({ activo: false }).eq('producto_id', productToDelete.user_id);
+            setMessage(`Producto "${productToDelete.nombre}" archivado con éxito.`);
             fetchProductos();
         } catch (e) {
-            setMessage(`Error al eliminar: ${e.message}`);
+            setMessage(`Error al archivar: ${e.message}`);
         } finally {
             setIsDeleting(false);
             setProductToDelete(null);
@@ -1827,11 +1826,8 @@ export default function AdminProductosPage() {
                     descripcion: editingProduct.descripcion,
                     precio: parseFloat(editingProduct.precio) || 0,
                     precio_compra: parseFloat(editingProduct.precio_compra) || 0,
-                    stock: Math.max(0, Number(String(editingProduct.stock || 0).replace(',', '.')) || 0),
                     category_id: categoryIdValue,
                     vista_producto: normalizeProductView(editingProduct.vista_producto || currentProductView),
-                    // Dejamos el codigo_barra para que no se re-genere si se guarda sin querer
-                    codigo_barra: editingProduct.codigo_barra
                 })
                 .eq('user_id', editingProduct.user_id);
             if (activeSucursalId) updateQuery = updateQuery.eq('sucursal_id', activeSucursalId);
@@ -1839,7 +1835,6 @@ export default function AdminProductosPage() {
             if (updateError) {
                 throw new Error(updateError.message);
             }
-            await sincronizarStockProducto(editingProduct.user_id, supabase);
 
             // 3. Eliminar imágenes quitadas (de la tabla producto_imagenes)
             const originales = imagenesProductos[editingProduct.user_id] || [];

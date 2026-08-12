@@ -8,9 +8,7 @@ import { Toast } from "@/components/ui/Toast";
 import { showToast } from "@/components/ui/Toast";
 import { supabase } from "@/lib/SupabaseClient";
 import { Input } from "@/components/ui/input";
-import { registrarMovimientoStock } from "@/lib/stockMovimientos";
-import { registrarHistorialProducto } from "@/lib/productosHistorial";
-import { sincronizarStockProducto, validarProducto } from "@/lib/utils";
+import { validarProducto } from "@/lib/utils";
 import { getProductViewMeta, normalizeProductView } from "@/lib/productViews";
 import { useSucursalActiva } from "@/components/admin/SucursalContext";
 import { optimizeImageForUpload } from "@/lib/imageUploadOptimization";
@@ -177,7 +175,7 @@ export default function EditarCatalogo() {
           ...prev,
           [productKey]: {
             ...prev[productKey],
-            variantes: [...current, { color: '', talla: '', stock: 0 }],
+            variantes: [...current, { color: '', talla: '', stock: 0, stock_decimal: 0, sku: '' }],
           },
         };
       });
@@ -344,8 +342,8 @@ export default function EditarCatalogo() {
       }
 
 
-      // 1. Actualizar producto (campos básicos, stock e imagen principal)
-      const stockTotal = nuevasVariantes.reduce((acc, v) => acc + (parseDecimalInput(v.stock, 0) || 0), 0);
+      // La edición general solo modifica datos descriptivos. El inventario y los
+      // identificadores históricos se gestionan en flujos dedicados.
       const uploadedUrls = await uploadProductImages(nuevasImagenesRaw.filter(isFileImage));
       let uploadIndex = 0;
       const nuevasImagenes = nuevasImagenesRaw
@@ -373,8 +371,6 @@ export default function EditarCatalogo() {
         category_id: cambios.category_id
           ? parseInt(cambios.category_id, 10)
           : productoActual?.category_id ?? null,
-        codigo_barra: cambios.codigo_barra ?? productoActual?.codigo_barra,
-        stock: stockTotal,
         imagen_url: imagenPrincipal || null,
       };
 
@@ -392,11 +388,13 @@ export default function EditarCatalogo() {
       // Obtener variantes actuales en BD
       const { data: variantesBD } = await supabase
         .from("producto_variantes")
-        .select("id, producto_id, color, talla, stock, sku, precio, imagen_url, activo").eq("producto_id", productoActual.user_id);
+        .select("id, producto_id, color, talla, stock, stock_decimal, sku, precio, imagen_url, activo").eq("producto_id", productoActual.user_id);
       // Eliminar variantes quitadas
       for (const vBD of variantesBD || []) {
         if (!nuevasVariantes.some(v => v.id === vBD.id)) {
-          await supabase.from("producto_variantes").delete().eq("id", vBD.id);
+          const stockActual = Number(vBD.stock_decimal ?? vBD.stock ?? 0);
+          if (stockActual > 0) throw new Error(`No se puede eliminar la variante ${vBD.color || vBD.id}: aún tiene stock.`);
+          await supabase.from("producto_variantes").update({ activo: false }).eq("id", vBD.id);
         }
       }
       // Insertar o actualizar variantes
@@ -406,9 +404,6 @@ export default function EditarCatalogo() {
           await supabase.from("producto_variantes").update({
             color: v.color,
             talla: v.talla,
-            stock: Math.max(0, Math.floor(parseDecimalInput(v.stock, 0) || 0)),
-            stock_decimal: Math.max(0, parseDecimalInput(v.stock, 0) || 0),
-            sku: v.sku,
             precio: parseDecimalInput(v.precio, null),
             imagen_url: v.imagen_url,
             activo: v.activo !== undefined ? v.activo : true,
@@ -420,10 +415,10 @@ export default function EditarCatalogo() {
             sucursal_id: activeSucursalId || null,
             color: v.color,
             talla: v.talla,
-            stock: Math.max(0, Math.floor(parseDecimalInput(v.stock, 0) || 0)),
-            stock_decimal: Math.max(0, parseDecimalInput(v.stock, 0) || 0),
-            stock_inicial: Math.max(0, Math.floor(parseDecimalInput(v.stock, 0) || 0)),
-            stock_inicial_decimal: Math.max(0, parseDecimalInput(v.stock, 0) || 0),
+            stock: 0,
+            stock_decimal: 0,
+            stock_inicial: 0,
+            stock_inicial_decimal: 0,
             sku: v.sku,
             precio: parseDecimalInput(v.precio, null),
             imagen_url: v.imagen_url,

@@ -20,13 +20,6 @@ export default function ProductCard({
   const productId = prod?.id ?? prod?.user_id;
   const imagesArr = editData.reordered ?? editData.originalImages ?? [];
   const variantsArr = editData.variantes ?? editData.originalVariants ?? [];
-  const totalStockFromVariants = variantsArr.reduce(
-    (sum, v) => {
-      const parsed = Number(String(v?.stock_decimal ?? v?.stock ?? 0).replace(",", "."));
-      return sum + (Number.isFinite(parsed) ? Math.max(0, parsed) : 0);
-    },
-    0
-  );
   // Siempre usar la imagen del producto, nunca de variante
   const imageFromProducto = imagesArr.find(
     (img) => String(img.imagen_url || "") === String(prod.imagen_url || "")
@@ -153,12 +146,8 @@ export default function ProductCard({
 
         <div className="flex flex-col">
           <label className="font-semibold text-gray-700">Código de barra</label>
-          <Input
-            value={editData.codigo_barra ?? prod.codigo_barra}
-            onChange={(e) =>
-              setEditDataField(productId, "codigo_barra", e.target.value)
-            }
-          />
+          <Input value={prod.codigo_barra || ""} readOnly className="bg-slate-100" />
+          <span className="mt-1 text-xs text-slate-500">Identificador protegido; no se modifica desde edición general.</span>
         </div>
 
         <div className="flex flex-col">
@@ -192,17 +181,8 @@ export default function ProductCard({
 
         <div className="flex flex-col">
           <label className="font-semibold text-gray-700">Stock</label>
-          <Input
-            type="number"
-            value={variantsArr.length > 0 ? totalStockFromVariants : (editData.stock ?? prod.stock)}
-            onChange={(e) =>
-              setEditDataField(productId, "stock", e.target.value)
-            }
-            readOnly={variantsArr.length > 0}
-          />
-          {variantsArr.length > 0 && (
-            <span className="text-xs text-gray-500 mt-1">Stock calculado desde colores</span>
-          )}
+          <Input value={prod.stock ?? 0} readOnly className="bg-slate-100" />
+          <span className="mt-1 text-xs text-slate-500">Solo puede cambiarse desde Control de Stock.</span>
         </div>
       </div>
 
@@ -238,13 +218,13 @@ export default function ProductCard({
         ) : (
           <div className="space-y-2">
             <div className="text-xs text-slate-500 mb-1">
-              Lista editable por variante: color, stock, precio, SKU y estado.
+              El stock y SKU son solo lectura. Las variantes nuevas empiezan en cero.
             </div>
             <div className="text-xs text-gray-600 mb-2 grid grid-cols-1 md:grid-cols-6 gap-2 px-2">
               <span>Color</span>
-              <span>Stock</span>
+              <span>Stock (solo lectura)</span>
               <span>Precio</span>
-              <span>SKU</span>
+              <span>SKU (protegido)</span>
               <span>Activo</span>
               <span></span>
             </div>
@@ -260,8 +240,8 @@ export default function ProductCard({
                 <Input
                   type="number"
                   min="0"
-                  value={variant.stock ?? 0}
-                  onChange={(e) => onVariantFieldChange(productId, idx, "stock", e.target.value)}
+                  value={variant.stock_decimal ?? variant.stock ?? 0}
+                  readOnly
                   placeholder="Stock"
                   className="text-sm"
                 />
@@ -276,7 +256,7 @@ export default function ProductCard({
                 />
                 <Input
                   value={variant.sku ?? ""}
-                  onChange={(e) => onVariantFieldChange(productId, idx, "sku", e.target.value)}
+                  readOnly={Boolean(variant.id)}
                   placeholder="SKU (opt)"
                   className="text-sm"
                 />

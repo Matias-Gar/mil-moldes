@@ -29,6 +29,8 @@ export async function crearVentaCompleta(payload: {
   usuario_email?: string | null;
   cashbox_id?: string;
   sucursal_id?: string | null;
+  idempotency_key: string;
+  pedido_id?: number | string | null;
 }) {
   return supabase.rpc('crear_venta_completa', {
     p_venta: payload.venta,
@@ -38,6 +40,21 @@ export async function crearVentaCompleta(payload: {
     p_usuario_email: payload.usuario_email || null,
     p_cashbox_id: payload.cashbox_id || 'main',
     p_sucursal_id: payload.sucursal_id || null,
+    p_idempotency_key: payload.idempotency_key,
+    p_pedido_id: payload.pedido_id || null,
+  });
+}
+
+export async function reducirStockCompleto(payload: {
+  producto_id: ProductoId; variante_id?: ProductoId | null; cantidad: number;
+  unidad?: string | null; motivo: string; usuario_id?: string | null;
+  usuario_email?: string | null; sucursal_id?: string | null; correlation_id?: string;
+}) {
+  return supabase.rpc('reducir_stock_completo', {
+    p_producto_id: payload.producto_id, p_variante_id: payload.variante_id || null,
+    p_cantidad: payload.cantidad, p_unidad: payload.unidad || null, p_motivo: payload.motivo,
+    p_usuario_id: payload.usuario_id || null, p_usuario_email: payload.usuario_email || null,
+    p_sucursal_id: payload.sucursal_id || null, p_correlation_id: payload.correlation_id || null,
   });
 }
 
@@ -133,5 +150,9 @@ export async function fetchCarritosPendientes() {
 }
 
 export async function eliminarCarritoPendiente(id: ProductoId) {
-  return supabase.from('carritos_pendientes').delete().eq('id', id);
+  return supabase.rpc('descartar_pedido_pendiente', { p_pedido_id: id, p_motivo: 'Descartado desde gestión de pedidos' });
+}
+
+export async function descartarPedidoPendiente(id: ProductoId, motivo: string) {
+  return supabase.rpc('descartar_pedido_pendiente', { p_pedido_id: id, p_motivo: motivo });
 }

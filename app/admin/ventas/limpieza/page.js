@@ -156,7 +156,7 @@ export default function LimpiezaVentasPage() {
 
   const deleteSale = async () => {
     if (!target || !sessionUser?.email) return;
-    const expected = `ELIMINAR ${target.id}`;
+    const expected = `ANULAR ${target.id}`;
     if (phrase.trim() !== expected) {
       showToast(`Escribe exactamente: ${expected}`, "error");
       return;
@@ -166,7 +166,7 @@ export default function LimpiezaVentasPage() {
       return;
     }
     if (motivo.trim().length < 8) {
-      showToast("Escribe un motivo claro para devolver stock y eliminar la venta.", "error");
+      showToast("Escribe un motivo claro para devolver stock y anular la venta.", "error");
       return;
     }
 
@@ -193,11 +193,11 @@ export default function LimpiezaVentasPage() {
       }
 
       const restoredRows = Number(data?.stock_restored_rows || 0);
-      showToast(`Venta #${saleId} eliminada y stock restaurado (${restoredRows} movimiento${restoredRows === 1 ? "" : "s"}).`, "success");
+      showToast(`Venta #${saleId} anulada y stock restaurado (${restoredRows} movimiento${restoredRows === 1 ? "" : "s"}).`, "success");
       closeDelete();
       await loadVentas();
     } catch (error) {
-      showToast(`No se pudo eliminar: ${error.message || error}`, "error");
+      showToast(`No se pudo anular: ${error.message || error}`, "error");
     } finally {
       setDeleting(false);
     }
@@ -211,8 +211,8 @@ export default function LimpiezaVentasPage() {
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-slate-900">
           <h1 className="text-2xl font-black">Limpieza de ventas</h1>
           <p className="mt-1 text-sm font-semibold text-amber-800">
-            Herramienta exclusiva de administrador. Sirve para eliminar ventas fallidas y tambien ventas reales
-            cuando el cliente cambia la compra: primero devuelve stock y despues elimina la venta.
+            Herramienta exclusiva de administrador. Anula ventas y devuelve exactamente el stock, conservando
+            venta, detalles, pagos, caja y movimientos originales para auditoría.
           </p>
         </div>
 
@@ -280,7 +280,7 @@ export default function LimpiezaVentasPage() {
                         onClick={() => openDelete(sale)}
                         className={`rounded px-3 py-1 font-bold text-white ${suspicious ? "bg-red-700 hover:bg-red-800" : "bg-amber-600 hover:bg-amber-700"}`}
                       >
-                        Devolver y eliminar
+                        Anular y devolver
                       </button>
                     </td>
                   </tr>
@@ -294,9 +294,9 @@ export default function LimpiezaVentasPage() {
       {target && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-lg rounded-lg bg-white p-5 text-slate-900 shadow-2xl">
-            <h2 className="text-xl font-black text-red-700">Eliminar venta y devolver stock</h2>
+            <h2 className="text-xl font-black text-red-700">Anular venta y devolver stock</h2>
             <p className="mt-2 text-sm">
-              Vas a eliminar la venta <b>#{target.id}</b>. Primero se devolvera el stock de sus productos y despues se borraran pagos, detalle, caja y la venta.
+              Vas a anular la venta <b>#{target.id}</b>. El stock y la caja se compensarán sin borrar ningún registro original.
             </p>
             <p className="mt-2 rounded bg-amber-50 p-3 text-sm font-semibold text-amber-800">
               Usala cuando el cliente cambio la compra despues de efectivizar. Si algo falla, la base de datos revierte todo y no deja el inventario a medias.
@@ -308,7 +308,7 @@ export default function LimpiezaVentasPage() {
               placeholder="Ej: Cliente cambio productos antes de salir, se elimina venta para hacer una nueva."
               className="mt-1 min-h-20 w-full rounded border border-slate-300 px-3 py-2"
             />
-            <label className="mt-4 block text-sm font-bold">Escribe ELIMINAR {target.id}</label>
+            <label className="mt-4 block text-sm font-bold">Escribe ANULAR {target.id}</label>
             <input
               value={phrase}
               onChange={(e) => setPhrase(e.target.value)}
@@ -326,7 +326,7 @@ export default function LimpiezaVentasPage() {
                 Cancelar
               </button>
               <button onClick={deleteSale} disabled={deleting} className="rounded bg-red-700 px-4 py-2 font-bold text-white disabled:opacity-60">
-                {deleting ? "Restaurando y eliminando..." : "Devolver stock y eliminar"}
+                {deleting ? "Restaurando y anulando..." : "Anular y devolver stock"}
               </button>
             </div>
           </div>

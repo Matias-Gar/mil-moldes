@@ -238,6 +238,8 @@ export default function NuevaVenta() {
 
   const printerRef = useRef<TicketPrinterHandle>(null);
   const efectivizarBtnRef = useRef<HTMLButtonElement>(null);
+  // Se conserva durante reintentos de la misma venta; solo rota al completar.
+  const saleIdempotencyKeyRef = useRef<string | null>(null);
 
   // Cargar carrito desde pedidos si existe
   // Dependencias fijas para evitar warning de React
@@ -992,6 +994,8 @@ export default function NuevaVenta() {
       }
 
       const { data: ventaRpc, error: ventaRpcError } = await ventasService.crearVentaCompleta({
+        idempotency_key: saleIdempotencyKeyRef.current ||= crypto.randomUUID(),
+        pedido_id: pedidoPendienteId,
         venta: {
           cliente_nombre: cliente.nombre,
           cliente_telefono: cliente.telefono,
@@ -1016,21 +1020,9 @@ export default function NuevaVenta() {
       });
       if (ventaRpcError || !ventaRpc) throw ventaRpcError || new Error('no venta');
       printerRef.current?.printComprobante();
-      if (pedidoPendienteId) {
-        let pedidoQuery = supabase
-          .from('carritos_pendientes')
-          .update({ confirmado_pago: true })
-          .eq('id', pedidoPendienteId);
-        if (activeSucursalId) pedidoQuery = pedidoQuery.eq('sucursal_id', activeSucursalId);
-        const { error: pedidoError } = await pedidoQuery;
-        if (pedidoError) {
-          console.error('No se pudo marcar el pedido como confirmado:', pedidoError);
-          showToast('La venta se guardo, pero el pedido pendiente no se pudo cerrar automaticamente.', 'info');
-        } else {
-          setPedidoPendienteId(null);
-        }
-      }
+      if (pedidoPendienteId) setPedidoPendienteId(null);
       setCarrito([]);
+      saleIdempotencyKeyRef.current = null;
       setPagos([{ metodo: '', monto: 0 }]);
       setEnvio(0); setComision(0); setPublicidad(0); setRebajas(0); setCobrarImpuestos(false);
       cambiarCampo('nombre',''); cambiarCampo('carnet',''); cambiarCampo('telefono',''); cambiarCampo('email',''); cambiarCampo('nit',''); cambiarCampo('guardado',false); cambiarCampo('requiereFactura',false);

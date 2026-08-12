@@ -13,6 +13,7 @@ import { canAccessAdminPath } from '../../../lib/adminPermissions';
 import { sincronizarStockProducto } from '../../../lib/utils';
 import { normalizeProductView } from '../../../lib/productViews';
 import { useSucursalActiva } from '../../../components/admin/SucursalContext';
+import * as ventasService from '../../../services/ventas.service';
 
 // Desactivar SSR para el componente de código de barras si usa librerías de cliente como 'react-barcode'
 // Si la tabla usa react-barcode, este dynamic es necesario. Si solo usa la función handlePrintBarcode, se podría quitar.
@@ -599,7 +600,7 @@ export default function AdminProductosPage() {
                 nombre: newProduct.nombre,
                 descripcion: newProduct.descripcion,
                 precio: parseFloat(newProduct.precio) || 0,
-                stock: Math.max(0, parseDecimalInput(newProduct.stock, 0)),
+                stock: 0,
                 category_id: categoryIdValue,
                 codigo_barra: codigoBarra,
                 vista_producto: normalizeProductView(newProduct.vista_producto),
@@ -629,6 +630,16 @@ export default function AdminProductosPage() {
             }
 
             setMessage('✅ Producto creado con éxito!');
+            const initialStock = Math.max(0, parseDecimalInput(newProduct.stock, 0));
+            if (initialStock > 0 && productoInsertado?.[0]?.user_id) {
+                const user = (await supabase.auth.getUser())?.data?.user;
+                const { error: increaseError } = await ventasService.aumentarStockCompleto({
+                    producto_id: productoInsertado[0].user_id, cantidad: initialStock, unidad: 'unidad',
+                    usuario_id: user?.id || null, usuario_email: user?.email || '',
+                    sucursal_id: activeSucursalId || null, observaciones: 'Stock inicial auditado desde alta de producto',
+                });
+                if (increaseError) throw increaseError;
+            }
             setNewProduct({ nombre: '', descripcion: '', precio: '', stock: '', category_id: '', codigo_barra: '', vista_producto: 'articulos' });
             setImageFiles([]);
             if (newImageInputRef.current) {
@@ -659,7 +670,7 @@ export default function AdminProductosPage() {
             // La eliminación en cascada debería manejar las imágenes relacionadas
             let deleteQuery = supabase
                 .from('productos')
-                .delete()
+                .update({ archivado: true, archivado_at: new Date().toISOString(), archivado_motivo: 'Archivado desde administración de productos' })
                 // Usamos user_id como ID único del producto para filtrar
                 .eq('user_id', productToDelete.user_id);
             if (activeSucursalId) deleteQuery = deleteQuery.eq('sucursal_id', activeSucursalId);
@@ -701,11 +712,8 @@ export default function AdminProductosPage() {
                     descripcion: editingProduct.descripcion,
                     precio: parseFloat(editingProduct.precio) || 0,
                     precio_compra: parseFloat(editingProduct.precio_compra) || 0,
-                    stock: Math.max(0, parseDecimalInput(editingProduct.stock, 0)),
                     category_id: categoryIdValue,
                     vista_producto: normalizeProductView(editingProduct.vista_producto),
-                    // Dejamos el codigo_barra para que no se re-genere si se guarda sin querer
-                    codigo_barra: editingProduct.codigo_barra
                 })
                 .eq('user_id', editingProduct.user_id);
             if (activeSucursalId) updateQuery = updateQuery.eq('sucursal_id', activeSucursalId);
@@ -713,7 +721,6 @@ export default function AdminProductosPage() {
             if (updateError) {
                 throw new Error(updateError.message);
             }
-            await sincronizarStockProducto(editingProduct.user_id, supabase);
 
             // 3. Eliminar imágenes quitadas (de la tabla producto_imagenes)
             const originales = imagenesProductos[editingProduct.user_id] || [];

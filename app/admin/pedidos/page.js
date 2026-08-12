@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../lib/SupabaseClient";
 import { useSucursalActiva } from "../../../components/admin/SucursalContext";
+import * as ventasService from "../../../services/ventas.service";
 
 export default function PedidosPage() {
   const [carritos, setCarritos] = useState([]);
@@ -17,7 +18,8 @@ export default function PedidosPage() {
   async function fetchCarritos() {
     let query = supabase
       .from("carritos_pendientes")
-      .select("id, cliente_nombre, cliente_telefono, usuario_email, productos, fecha, confirmado_pago")
+      .select("id, cliente_nombre, cliente_telefono, usuario_email, productos, fecha, confirmado_pago, estado, venta_id")
+      .eq("estado", "pendiente")
       .order("fecha", { ascending: false });
     if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
     const { data, error } = await query;
@@ -41,20 +43,16 @@ export default function PedidosPage() {
         return diferenciaEnDias > 5 && !carrito.confirmado_pago;  // Si el carrito está vencido y no tiene pago confirmado
       });
 
-      // Eliminar los carritos vencidos de la base de datos
+      // Los pedidos vencidos se conservan y se marcan descartados para auditoría.
       for (const carrito of carritosVencidos) {
-        let deleteQuery = supabase.from("carritos_pendientes").delete().eq("id", carrito.id);
-        if (activeSucursalId) deleteQuery = deleteQuery.eq("sucursal_id", activeSucursalId);
-        await deleteQuery;
+        await ventasService.descartarPedidoPendiente(carrito.id, "Pedido vencido automáticamente después de 5 días");
       }
     }
   }
 
   async function eliminarCarrito(id) {
     if (!window.confirm("¿Estás seguro de que deseas eliminar este pedido? Esta acción no se puede deshacer.")) return;
-    let query = supabase.from("carritos_pendientes").delete().eq("id", id);
-    if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
-    await query;
+    await ventasService.descartarPedidoPendiente(id, "Descartado manualmente desde gestión de pedidos");
     fetchCarritos();
   }
 
