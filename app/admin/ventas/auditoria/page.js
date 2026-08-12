@@ -154,15 +154,15 @@ export default function AuditoriaStockPage() {
     );
     const transferenciasAuditadas = transferenciasMovimiento.filter((m) => String(m.tipo || "").toLowerCase().endsWith("_auditada"));
     const fuenteMovimientosTransferencia = transferenciasAuditadas.length > 0 ? transferenciasAuditadas : transferenciasMovimiento;
-    const transferenciasEntrada = fuenteMovimientosTransferencia.length > 0
-        ? fuenteMovimientosTransferencia.filter((m) => isTransferenciaEntrada(m.tipo)).reduce((sum, m) => sum + qtyBase(m), 0)
-      : transferenciasProducto.length > 0
+    const transferenciasEntrada = transferenciasProducto.length > 0
         ? transferenciasProducto.filter((t) => String(t.sucursal_destino_id) === String(activeSucursalId)).reduce((sum, t) => sum + qtyBase(t), 0)
+      : fuenteMovimientosTransferencia.length > 0
+        ? fuenteMovimientosTransferencia.filter((m) => isTransferenciaEntrada(m.tipo)).reduce((sum, m) => sum + qtyBase(m), 0)
         : transferenciasHistorial.filter((h) => String(h.accion).toUpperCase() === "TRANSFER_IN").reduce((sum, h) => sum + qtyBase(h.datos_nuevos), 0);
-    const transferenciasSalida = fuenteMovimientosTransferencia.length > 0
-        ? fuenteMovimientosTransferencia.filter((m) => isTransferenciaSalida(m.tipo)).reduce((sum, m) => sum + qtyBase(m), 0)
-      : transferenciasProducto.length > 0
+    const transferenciasSalida = transferenciasProducto.length > 0
         ? transferenciasProducto.filter((t) => String(t.sucursal_origen_id) === String(activeSucursalId)).reduce((sum, t) => sum + qtyBase(t), 0)
+      : fuenteMovimientosTransferencia.length > 0
+        ? fuenteMovimientosTransferencia.filter((m) => isTransferenciaSalida(m.tipo)).reduce((sum, m) => sum + qtyBase(m), 0)
         : transferenciasHistorial.filter((h) => String(h.accion).toUpperCase() === "TRANSFER_OUT").reduce((sum, h) => sum + qtyBase(h.datos_nuevos), 0);
     const transferencias = transferenciasEntrada - transferenciasSalida;
     const reconciliacionProducto = reconciliacion.filter((r) => String(r.producto_id) === String(producto.user_id));
@@ -189,25 +189,26 @@ export default function AuditoriaStockPage() {
       const movimientosVariante = movimientosProducto.filter((m) => String(m.variante_id) === String(v.id) && (isTransferenciaEntrada(m.tipo) || isTransferenciaSalida(m.tipo)));
       const movimientosVarianteAuditados = movimientosVariante.filter((m) => String(m.tipo || "").toLowerCase().endsWith("_auditada"));
       const fuenteVariante = movimientosVarianteAuditados.length > 0 ? movimientosVarianteAuditados : movimientosVariante;
-      const transferencias = fuenteVariante.length > 0
-        ? fuenteVariante.reduce((sum, movimiento) => {
-            if (isTransferenciaEntrada(movimiento.tipo)) return sum + qtyBase(movimiento);
-            if (isTransferenciaSalida(movimiento.tipo)) return sum - qtyBase(movimiento);
-            return sum;
-          }, 0)
-        : transferenciasProducto.length > 0
-        ? transferenciasProducto.reduce((sum, transferencia) => {
-            if (String(transferencia.sucursal_destino_id) === String(activeSucursalId) && String(transferencia.variante_destino_id) === String(v.id)) return sum + qtyBase(transferencia);
-            if (String(transferencia.sucursal_origen_id) === String(activeSucursalId) && String(transferencia.variante_origen_id) === String(v.id)) return sum - qtyBase(transferencia);
-            return sum;
-          }, 0)
-        : 0;
-      const transferenciaPositiva = fuenteVariante.length > 0
-        ? fuenteVariante.filter((m) => isTransferenciaEntrada(m.tipo)).reduce((sum, m) => sum + qtyBase(m), 0)
-        : transferenciasProducto.filter((t) => String(t.sucursal_destino_id) === String(activeSucursalId) && String(t.variante_destino_id) === String(v.id)).reduce((sum, t) => sum + qtyBase(t), 0);
-      const transferenciaNegativa = fuenteVariante.length > 0
-        ? fuenteVariante.filter((m) => isTransferenciaSalida(m.tipo)).reduce((sum, m) => sum + qtyBase(m), 0)
-        : transferenciasProducto.filter((t) => String(t.sucursal_origen_id) === String(activeSucursalId) && String(t.variante_origen_id) === String(v.id)).reduce((sum, t) => sum + qtyBase(t), 0);
+      // Registros heredados pueden no tener variante. Si el producto solo tiene
+      // una, la transferencia pertenece inequívocamente a esa variante.
+      const correspondeVariante = (transferencia, campo) => (
+        String(transferencia[campo]) === String(v.id) ||
+        (transferencia[campo] == null && vars.length === 1)
+      );
+      const transferenciasEntradaVariante = transferenciasProducto.filter((t) => (
+        String(t.sucursal_destino_id) === String(activeSucursalId) && correspondeVariante(t, "variante_destino_id")
+      ));
+      const transferenciasSalidaVariante = transferenciasProducto.filter((t) => (
+        String(t.sucursal_origen_id) === String(activeSucursalId) && correspondeVariante(t, "variante_origen_id")
+      ));
+      const hayTransferenciaCanonica = transferenciasEntradaVariante.length > 0 || transferenciasSalidaVariante.length > 0;
+      const transferenciaPositiva = hayTransferenciaCanonica
+        ? transferenciasEntradaVariante.reduce((sum, t) => sum + qtyBase(t), 0)
+        : fuenteVariante.filter((m) => isTransferenciaEntrada(m.tipo)).reduce((sum, m) => sum + qtyBase(m), 0);
+      const transferenciaNegativa = hayTransferenciaCanonica
+        ? transferenciasSalidaVariante.reduce((sum, t) => sum + qtyBase(t), 0)
+        : fuenteVariante.filter((m) => isTransferenciaSalida(m.tipo)).reduce((sum, m) => sum + qtyBase(m), 0);
+      const transferencias = transferenciaPositiva - transferenciaNegativa;
       const actual = stockValue(v);
       const reconciliacionVariante = reconciliacionProducto.find((r) => String(r.variante_id) === String(v.id));
       const calculado = reconciliacionVariante ? Number(reconciliacionVariante.stock_reconstruido || 0) : inicial - ventas + transferencias;

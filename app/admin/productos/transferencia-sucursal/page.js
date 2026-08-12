@@ -374,7 +374,8 @@ export default function TransferenciaSucursalPage() {
       return;
     }
     const activeVariants = variantesByProducto[String(selectedItem.productId)] || [];
-    if (activeVariants.length > 0 && !selectedItem.variantId) {
+    const effectiveVariantId = selectedItem.variantId || (activeVariants.length === 1 ? activeVariants[0].id : null);
+    if (activeVariants.length > 0 && !effectiveVariantId) {
       showToast("Selecciona obligatoriamente el color/variante antes de transferir", "error");
       return;
     }
@@ -386,7 +387,7 @@ export default function TransferenciaSucursalPage() {
 
       const rpcPayload = {
         p_producto_origen_id: Number(selectedItem.productId),
-        p_variante_origen_id: selectedItem.variantId ? Number(selectedItem.variantId) : null,
+        p_variante_origen_id: effectiveVariantId ? Number(effectiveVariantId) : null,
         p_sucursal_origen_id: activeSucursalId,
         p_sucursal_destino_id: effectiveDestinoId,
         p_cantidad: Number(cantidad),
