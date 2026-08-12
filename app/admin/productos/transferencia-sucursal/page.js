@@ -373,6 +373,11 @@ export default function TransferenciaSucursalPage() {
       showToast("Cantidad invalida o stock insuficiente", "error");
       return;
     }
+    const activeVariants = variantesByProducto[String(selectedItem.productId)] || [];
+    if (activeVariants.length > 0 && !selectedItem.variantId) {
+      showToast("Selecciona obligatoriamente el color/variante antes de transferir", "error");
+      return;
+    }
 
     setSaving(true);
     try {

@@ -149,7 +149,9 @@ export default function AuditoriaStockPage() {
     const salidas = salidasMovimientos > 0 ? salidasMovimientos : ventasTotalDetalle;
     // La tabla de transferencias es la fuente canonica. Algunas transferencias
     // antiguas de la sucursal origen no tienen su fila en stock_movimientos.
-    const transferenciasMovimiento = movimientosProducto.filter((m) => isTransferenciaEntrada(m.tipo) || isTransferenciaSalida(m.tipo));
+    const transferenciasMovimiento = movimientosProducto.filter((m) =>
+      (isTransferenciaEntrada(m.tipo) || isTransferenciaSalida(m.tipo)) && (!hasVariants || m.variante_id != null)
+    );
     const transferenciasAuditadas = transferenciasMovimiento.filter((m) => String(m.tipo || "").toLowerCase().endsWith("_auditada"));
     const fuenteMovimientosTransferencia = transferenciasAuditadas.length > 0 ? transferenciasAuditadas : transferenciasMovimiento;
     const transferenciasEntrada = fuenteMovimientosTransferencia.length > 0
