@@ -12,8 +12,10 @@ begin
   if v_latest.producto_origen_id<>1228 or v_latest.producto_destino_id<>72 then
     raise exception 'La última transferencia no es la devolución esperada 1228 -> 72';
   end if;
-  if v_latest.variante_origen_id is not null then
-    raise exception 'La devolución ya tiene variante; revisar antes de corregir';
+  if v_latest.variante_origen_id is not null and (
+    v_latest.variante_origen_id<>1229 or v_latest.variante_destino_id is distinct from 75
+  ) then
+    raise exception 'La devolución apunta a variantes inesperadas: origen %, destino %',v_latest.variante_origen_id,v_latest.variante_destino_id;
   end if;
   if exists(select 1 from public.stock_movimientos where idempotency_key='transfer-fix-v8:'||v_latest.id::text) then
     raise exception 'La corrección v8 ya fue aplicada';
