@@ -201,13 +201,22 @@ export default function AuditoriaStockPage() {
       const transferenciasSalidaVariante = transferenciasProducto.filter((t) => (
         String(t.sucursal_origen_id) === String(activeSucursalId) && correspondeVariante(t, "variante_origen_id")
       ));
-      const hayTransferenciaCanonica = transferenciasEntradaVariante.length > 0 || transferenciasSalidaVariante.length > 0;
-      const transferenciaPositiva = hayTransferenciaCanonica
+      const historialVariante = transferenciasHistorial.filter((h) => {
+        const varianteHistorial = h.datos_nuevos?.variante_id ?? h.datos_nuevos?.variante_origen_id ?? h.datos_nuevos?.variante_destino_id;
+        return String(varianteHistorial) === String(v.id) || (varianteHistorial == null && vars.length === 1);
+      });
+      const movimientosEntradaVariante = fuenteVariante.filter((m) => isTransferenciaEntrada(m.tipo));
+      const movimientosSalidaVariante = fuenteVariante.filter((m) => isTransferenciaSalida(m.tipo));
+      const transferenciaPositiva = transferenciasEntradaVariante.length > 0
         ? transferenciasEntradaVariante.reduce((sum, t) => sum + qtyBase(t), 0)
-        : fuenteVariante.filter((m) => isTransferenciaEntrada(m.tipo)).reduce((sum, m) => sum + qtyBase(m), 0);
-      const transferenciaNegativa = hayTransferenciaCanonica
+        : movimientosEntradaVariante.length > 0
+          ? movimientosEntradaVariante.reduce((sum, m) => sum + qtyBase(m), 0)
+          : historialVariante.filter((h) => String(h.accion).toUpperCase() === "TRANSFER_IN").reduce((sum, h) => sum + qtyBase(h.datos_nuevos), 0);
+      const transferenciaNegativa = transferenciasSalidaVariante.length > 0
         ? transferenciasSalidaVariante.reduce((sum, t) => sum + qtyBase(t), 0)
-        : fuenteVariante.filter((m) => isTransferenciaSalida(m.tipo)).reduce((sum, m) => sum + qtyBase(m), 0);
+        : movimientosSalidaVariante.length > 0
+          ? movimientosSalidaVariante.reduce((sum, m) => sum + qtyBase(m), 0)
+          : historialVariante.filter((h) => String(h.accion).toUpperCase() === "TRANSFER_OUT").reduce((sum, h) => sum + qtyBase(h.datos_nuevos), 0);
       const transferencias = transferenciaPositiva - transferenciaNegativa;
       const actual = stockValue(v);
       const reconciliacionVariante = reconciliacionProducto.find((r) => String(r.variante_id) === String(v.id));
