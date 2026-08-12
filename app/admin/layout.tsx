@@ -4,7 +4,6 @@ import Sidebar from './Sidebar';
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/SupabaseClient';
 import { usePathname, useRouter } from 'next/navigation';
-import { Toast } from '../../components/ui/Toast';
 import { canAccessAdminPath, getDefaultAdminRoute, isAdminPanelRole } from '../../lib/adminPermissions';
 import { SucursalProvider } from '../../components/admin/SucursalContext';
 
@@ -85,7 +84,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <div className="flex min-h-screen">
-      <Toast />
       {/* Botón hamburguesa solo en móvil - SOLO PARA ADMINS */}
       <button
         className={`fixed top-4 left-4 z-[100] bg-gray-900 text-white p-2 rounded-full shadow-lg focus:outline-none transition-opacity duration-200 ${mobileOpen && 'opacity-0 pointer-events-none'} md:hidden`}

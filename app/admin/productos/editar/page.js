@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import ConfirmModal from "@/components/ConfirmModal";
 import ProductCard from "@/components/ProductCard";
-import { Toast } from "@/components/ui/Toast";
 import { showToast } from "@/components/ui/Toast";
 import { supabase } from "@/lib/SupabaseClient";
 import { Input } from "@/components/ui/input";
@@ -610,7 +609,6 @@ export default function EditarCatalogo() {
         cancelLabel="Volver"
       />
 
-      <Toast />
     </div>
   );
 }

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/SupabaseClient";
 
-import Toast, { showToast } from '../../../../components/ui/Toast';
+import { showToast } from '../../../../components/ui/Toast';
 
 
 import { registrarHistorialProducto } from "@/lib/productosHistorial";
@@ -636,7 +636,6 @@ export default function AumentarStockPage() {
 
   return (
     <div className="w-full min-h-screen bg-gradient-to-b from-white via-slate-50 to-gray-100 px-4 py-8 sm:px-6 lg:px-8">
-      <Toast />
 
       <div className="mx-auto w-full max-w-6xl">
         <header className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

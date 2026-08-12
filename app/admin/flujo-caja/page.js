@@ -13,7 +13,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Toast, showToast } from "../../../components/ui/Toast";
+import { showToast } from "../../../components/ui/Toast";
 import { supabase } from "../../../lib/SupabaseClient";
 import { useSucursalActiva } from "../../../components/admin/SucursalContext";
 
@@ -588,7 +588,6 @@ export default function FlujoCajaPage() {
 
   return (
     <div className="w-full min-h-screen bg-gradient-to-b from-white via-slate-50 to-slate-100 px-4 py-8 sm:px-6 lg:px-8">
-      <Toast />
 
       <div className="mx-auto w-full max-w-7xl space-y-6">
         <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

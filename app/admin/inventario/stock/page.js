@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../../lib/SupabaseClient";
 import { CONFIG, whatsappUtils } from "../../../../lib/config";
 import { DEFAULT_STORE_SETTINGS, fetchStoreSettings } from "../../../../lib/storeSettings";
-import { Toast, showToast } from "../../../../components/ui/Toast";
+import { showToast } from "../../../../components/ui/Toast";
 import { useSucursalActiva } from "../../../../components/admin/SucursalContext";
 
 export default function StockPage() {
@@ -780,7 +780,6 @@ export default function StockPage() {
 
   return (
     <div className="w-full min-h-screen bg-gradient-to-b from-white via-slate-50 to-gray-100 px-4 py-10 sm:px-6 lg:px-8">
-      <Toast />
 
       <div className="mx-auto w-full max-w-6xl">
         <header className="mb-6 flex flex-col items-center gap-4 text-center">

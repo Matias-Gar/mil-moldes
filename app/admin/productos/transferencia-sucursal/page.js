@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/SupabaseClient";
-import Toast, { showToast } from "@/components/ui/Toast";
+import { showToast } from "@/components/ui/Toast";
 import { useSucursalActiva } from "@/components/admin/SucursalContext";
 
 const SEARCH_LIMIT = 1200;
@@ -443,7 +443,6 @@ export default function TransferenciaSucursalPage() {
 
   return (
     <div className="w-full min-h-screen bg-gradient-to-b from-white via-slate-50 to-gray-100 px-4 py-8 sm:px-6 lg:px-8">
-      <Toast />
 
       <div className="mx-auto w-full max-w-7xl">
         <header className="mb-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
