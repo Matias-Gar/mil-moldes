@@ -10,7 +10,7 @@ const candidateBuckets = ["imagenes_del_producto", "productos", "images", "image
 
 function getVariantStock(variant) {
   const decimal = Number(variant?.stock_decimal);
-  return Math.max(0, Number.isFinite(decimal) && decimal > 0 ? decimal : Number(variant?.stock || 0));
+  return Math.max(0, Number.isFinite(decimal) ? decimal : Number(variant?.stock || 0));
 }
 
 export default function CatalogoPage() {

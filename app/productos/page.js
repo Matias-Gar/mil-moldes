@@ -61,7 +61,7 @@ function UnitPricePanel({ conversionInfo, factor, className = "mb-3" }) {
 function getEffectiveVariantStock(variant) {
     const decimal = Number(variant?.stock_decimal);
     const legacy = Number(variant?.stock);
-    return Math.max(0, Number.isFinite(decimal) && decimal > 0 ? decimal : legacy || 0);
+    return Math.max(0, Number.isFinite(decimal) ? decimal : legacy || 0);
 }
 
 function isDefaultUniqueVariant(variant) {
@@ -335,9 +335,7 @@ export default function CatalogoPage() {
                     unidades_alternativas: Array.isArray(extra.unidades_alternativas) ? extra.unidades_alternativas : item.unidades_alternativas,
                     factor_conversion: Number(extra.factor_conversion || 0) || item.factor_conversion,
                     vista_producto: normalizeProductView(extra.vista_producto),
-                    stock: hasUnitConversion
-                        ? (productStock > 0 ? productStock : variantStock)
-                        : (variantStock > 0 || productStock <= 0 ? variantStock : productStock)
+                    stock: productVariants.length > 0 ? variantStock : productStock
                 };
             });
         } catch {
@@ -378,7 +376,7 @@ export default function CatalogoPage() {
                                         const stockBase = Number(p.stock_total || 0);
                                 const variantStock = p.variantes.reduce((acc, v) => acc + getEffectiveVariantStock(v), 0);
                                 const hasUnitConversion = Array.isArray(p.unidades_alternativas) && p.unidades_alternativas.length > 0 && Number(p.factor_conversion) > 0;
-                                return hasUnitConversion ? stockBase : (variantStock > 0 || stockBase <= 0 ? variantStock : stockBase);
+                                return variantesProducto.length > 0 ? variantStock : stockBase;
                                 }
                                 const stockBase = Number(p.stock_total || 0);
                                 // Si hay conversión y unidades alternativas, calcular stock alternativo

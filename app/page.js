@@ -58,22 +58,15 @@ function formatQuantity(value) {
 function getEffectiveVariantStock(variant) {
   const decimal = Number(variant?.stock_decimal);
   const legacy = Number(variant?.stock);
-  return Math.max(0, Number.isFinite(decimal) && decimal > 0 ? decimal : legacy || 0);
+  return Math.max(0, Number.isFinite(decimal) ? decimal : legacy || 0);
 }
 
 function getProductStockBase(producto) {
   const variantes = Array.isArray(producto?.variantes) ? producto.variantes : [];
   const productStock = Math.max(0, Number(producto?.stock ?? producto?.stock_total ?? 0));
   const variantStock = variantes.reduce((acc, variante) => acc + getEffectiveVariantStock(variante), 0);
-  const hasUnitConversion =
-    Array.isArray(producto?.unidades_alternativas) &&
-    producto.unidades_alternativas.length > 0 &&
-    Number(producto?.factor_conversion || 0) > 0;
-  if (hasUnitConversion && Number.isFinite(productStock)) {
-    return productStock > 0 ? productStock : variantStock;
-  }
   if (variantes.length > 0) {
-    return variantStock > 0 || productStock <= 0 ? variantStock : productStock;
+    return variantStock;
   }
   return productStock;
 }
@@ -347,7 +340,7 @@ export default function Home() {
           const productStock = Math.max(0, Number(p.stock_total || 0));
           if (Array.isArray(p.variantes) && p.variantes.length > 0) {
             const variantStock = p.variantes.reduce((acc, v) => acc + getEffectiveVariantStock(v), 0);
-            return variantStock > 0 || productStock <= 0 ? variantStock : productStock;
+            return variantStock;
           }
           return productStock;
         })(),
@@ -420,9 +413,7 @@ export default function Home() {
           unidad_base: extra.unidad_base || 'unidad',
           unidades_alternativas: extra.unidades_alternativas || [],
           factor_conversion: extra.factor_conversion,
-        stock: hasUnitConversion
-          ? (productStock > 0 ? productStock : variantStock)
-          : (variantStock > 0 || productStock <= 0 ? variantStock : productStock),
+        stock: variantes.length > 0 ? variantStock : productStock,
       };
       });
       const visibleProducts = dedupeCatalogProducts(filteredProducts);

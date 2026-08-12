@@ -29,7 +29,7 @@ function isTransferenciaSalida(tipo) {
 function stockValue(row) {
   const decimal = Number(row?.stock_decimal);
   const legacy = Number(row?.stock);
-  return Math.max(0, Number.isFinite(decimal) && decimal > 0 ? decimal : legacy || 0);
+  return Math.max(0, Number.isFinite(decimal) ? decimal : legacy || 0);
 }
 
 function qtyBase(row) {

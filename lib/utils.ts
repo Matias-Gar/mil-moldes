@@ -53,7 +53,7 @@ export async function sincronizarStockProducto(
     (sum: number, v: Variante) => {
       const decimal = Number((v as any).stock_decimal);
       const legacy = Number(v.stock);
-      return sum + Math.max(0, Number.isFinite(decimal) && decimal > 0 ? decimal : legacy || 0);
+      return sum + Math.max(0, Number.isFinite(decimal) ? decimal : legacy || 0);
     },
     0
   );

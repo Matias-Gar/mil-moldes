@@ -212,7 +212,7 @@ export default function StockPage() {
       if (!Array.isArray(variantes) || variantes.length === 0) return prod;
       const stockDecimal = variantes.reduce((sum, v) => sum + Number(v.stock || 0), 0);
       const productStock = Math.max(0, Number(prod?.stock || 0));
-      return { ...prod, stock: hasUnitConversion(prod) ? productStock : (stockDecimal > 0 || productStock <= 0 ? stockDecimal : productStock) };
+      return { ...prod, stock: stockDecimal };
     }));
   }
 
@@ -232,7 +232,7 @@ export default function StockPage() {
   function getEffectiveVariantStock(variant) {
     const decimal = Number(variant?.stock_decimal);
     const legacy = Number(variant?.stock);
-    return Math.max(0, Number.isFinite(decimal) && decimal > 0 ? decimal : legacy || 0);
+    return Math.max(0, Number.isFinite(decimal) ? decimal : legacy || 0);
   }
 
   function getUnitInfo(prod) {
@@ -255,7 +255,7 @@ export default function StockPage() {
     if (hasUnitConversion(prod)) return productStock;
     if (Array.isArray(prod?.variantes) && prod.variantes.length > 0) {
       const variantStock = prod.variantes.reduce((sum, v) => sum + getEffectiveVariantStock(v), 0);
-      return variantStock > 0 || productStock <= 0 ? variantStock : productStock;
+      return variantStock;
     }
     return productStock;
   }
@@ -502,7 +502,7 @@ export default function StockPage() {
       if (!(pid in totals)) return prod;
       const productStock = Math.max(0, Number(prod?.stock || 0));
       const variantStock = Math.max(0, Number(totals[pid] || 0));
-      return { ...prod, stock: hasUnitConversion(prod) ? productStock : (variantStock > 0 || productStock <= 0 ? variantStock : productStock) };
+      return { ...prod, stock: variantStock };
     });
   }
 

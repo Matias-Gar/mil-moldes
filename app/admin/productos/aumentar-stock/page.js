@@ -359,7 +359,7 @@ export default function AumentarStockPage() {
   function getEffectiveVariantStock(variant) {
     const decimal = Number(variant?.stock_decimal);
     const legacy = Number(variant?.stock);
-    return Math.max(0, Number.isFinite(decimal) && decimal > 0 ? decimal : legacy || 0);
+    return Math.max(0, Number.isFinite(decimal) ? decimal : legacy || 0);
   }
 
   function getUnitInfo(prod) {
@@ -414,7 +414,7 @@ export default function AumentarStockPage() {
     const list = Array.isArray(variants) ? variants : [];
     if (list.length > 0) {
       const variantStock = list.reduce((sum, v) => sum + getEffectiveVariantStock(v), 0);
-      return variantStock > 0 || productStock <= 0 ? variantStock : productStock;
+      return variantStock;
     }
     return productStock;
   }

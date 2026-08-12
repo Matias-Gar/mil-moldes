@@ -127,7 +127,7 @@ function normalizeQuantity(value: unknown) {
 function getVariantStock(variant?: { stock?: number; stock_decimal?: number } | null) {
   const decimal = Number(variant?.stock_decimal);
   const legacy = Number(variant?.stock);
-  return normalizeQuantity(Number.isFinite(decimal) && decimal > 0 ? decimal : legacy || 0);
+  return normalizeQuantity(Number.isFinite(decimal) ? decimal : legacy || 0);
 }
 
 function getProductStock(product?: { stock?: number } | null) {
