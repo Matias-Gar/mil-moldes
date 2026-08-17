@@ -34,7 +34,7 @@ export default function StockPage() {
   useEffect(() => {
     fetchProductos();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orden, page, activeSucursalId]);
+  }, [orden, page, activeSucursalId, search]);
 
   useEffect(() => {
     fetchCategorias();
@@ -79,7 +79,9 @@ export default function StockPage() {
       factor_conversion,
       categorias (categori)
     `, { count: "exact" });
+    enrichedQuery = enrichedQuery.eq("archivado", false);
     if (activeSucursalId) enrichedQuery = enrichedQuery.eq("sucursal_id", activeSucursalId);
+    if (search.trim()) enrichedQuery = enrichedQuery.ilike("nombre", `%${search.trim()}%`);
 
     const orderField = orden === "stock-desc" || orden === "stock-asc" ? "stock" : "user_id";
     const enrichedResult = await enrichedQuery
@@ -100,7 +102,9 @@ export default function StockPage() {
         factor_conversion,
         categorias (categori)
       `, { count: "exact" });
+      fallbackQuery = fallbackQuery.eq("archivado", false);
       if (activeSucursalId) fallbackQuery = fallbackQuery.eq("sucursal_id", activeSucursalId);
+      if (search.trim()) fallbackQuery = fallbackQuery.ilike("nombre", `%${search.trim()}%`);
 
       const orderField = orden === "stock-desc" || orden === "stock-asc" ? "stock" : "user_id";
       const fallbackResult = await fallbackQuery
