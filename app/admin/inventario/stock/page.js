@@ -7,6 +7,34 @@ import { DEFAULT_STORE_SETTINGS, fetchStoreSettings } from "../../../../lib/stor
 import { showToast } from "../../../../components/ui/Toast";
 import { useSucursalActiva } from "../../../../components/admin/SucursalContext";
 
+function normalizeSearchText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function matchesSearchValue(value, searchTerm) {
+  const normalizedValue = normalizeSearchText(value);
+  const normalizedSearch = normalizeSearchText(searchTerm);
+  if (!normalizedSearch) return true;
+  if (normalizedValue.includes(normalizedSearch)) return true;
+
+  const valueTokens = normalizedValue.split(" ").filter(Boolean);
+  const searchTokens = normalizedSearch.split(" ").filter(Boolean);
+  return searchTokens.every((searchToken) => valueTokens.some((valueToken) => {
+    const shortestLength = Math.min(valueToken.length, searchToken.length);
+    if (shortestLength >= 4 && (valueToken.startsWith(searchToken) || searchToken.startsWith(valueToken))) {
+      return true;
+    }
+    const valueStem = valueToken.length >= 5 ? valueToken.replace(/[aos]$/, "") : valueToken;
+    const searchStem = searchToken.length >= 5 ? searchToken.replace(/[aos]$/, "") : searchToken;
+    return valueStem === searchStem;
+  }));
+}
+
 export default function StockPage() {
   const { activeSucursalId } = useSucursalActiva();
   const getStockMinimo = useCallback((prod) => {
@@ -25,7 +53,6 @@ export default function StockPage() {
   const [printCategory, setPrintCategory] = useState("all");
   const [printMode, setPrintMode] = useState("total");
   const [page, setPage] = useState(0);
-  const [totalCount, setTotalCount] = useState(0);
   const [sendingAlertId, setSendingAlertId] = useState(null);
   const [printing, setPrinting] = useState(false);
   const [notifying, setNotifying] = useState(false);
@@ -34,7 +61,7 @@ export default function StockPage() {
   useEffect(() => {
     fetchProductos();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orden, page, activeSucursalId, search]);
+  }, [activeSucursalId]);
 
   useEffect(() => {
     fetchCategorias();
@@ -58,78 +85,46 @@ export default function StockPage() {
 
   async function fetchProductos() {
     setLoading(true);
-    const from = page * PAGE_SIZE;
-    const to = from + PAGE_SIZE - 1;
-
-    let data = null;
-    let error = null;
-    let count = 0;
-
-    let enrichedQuery = supabase.from("productos").select(`
-      user_id,
-      nombre,
-      precio,
-      stock,
-      stock_minimo,
-      imagen_url,
-      category_id,
-      codigo_barra,
-      unidad_base,
-      unidades_alternativas,
-      factor_conversion,
+    const batchSize = 500;
+    const selectWithMinimum = `
+      user_id, nombre, precio, stock, stock_minimo, imagen_url, category_id,
+      codigo_barra, unidad_base, unidades_alternativas, factor_conversion,
       categorias (categori)
-    `, { count: "exact" });
-    enrichedQuery = enrichedQuery.eq("archivado", false);
-    if (activeSucursalId) enrichedQuery = enrichedQuery.eq("sucursal_id", activeSucursalId);
-    if (search.trim()) enrichedQuery = enrichedQuery.ilike("nombre", `%${search.trim()}%`);
+    `;
+    const selectFallback = `
+      user_id, nombre, precio, stock, imagen_url, category_id,
+      codigo_barra, unidad_base, unidades_alternativas, factor_conversion,
+      categorias (categori)
+    `;
 
-    const orderField = orden === "stock-desc" || orden === "stock-asc" ? "stock" : "user_id";
-    const enrichedResult = await enrichedQuery
-      .order(orderField, { ascending: orden === "asc" || orden === "stock-asc" })
-      .range(from, to);
+    const loadAllBatches = async (selectColumns) => {
+      const rows = [];
+      for (let from = 0; ; from += batchSize) {
+        let query = supabase
+          .from("productos")
+          .select(selectColumns)
+          .eq("archivado", false)
+          .order("user_id", { ascending: true })
+          .range(from, from + batchSize - 1);
+        if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+        const result = await query;
+        if (result.error) return result;
+        rows.push(...(result.data || []));
+        if (!result.data || result.data.length < batchSize) return { data: rows, error: null };
+      }
+    };
 
-    if (enrichedResult.error) {
-      let fallbackQuery = supabase.from("productos").select(`
-        user_id,
-        nombre,
-        precio,
-        stock,
-        imagen_url,
-        category_id,
-        codigo_barra,
-        unidad_base,
-        unidades_alternativas,
-        factor_conversion,
-        categorias (categori)
-      `, { count: "exact" });
-      fallbackQuery = fallbackQuery.eq("archivado", false);
-      if (activeSucursalId) fallbackQuery = fallbackQuery.eq("sucursal_id", activeSucursalId);
-      if (search.trim()) fallbackQuery = fallbackQuery.ilike("nombre", `%${search.trim()}%`);
+    let result = await loadAllBatches(selectWithMinimum);
+    if (result.error) result = await loadAllBatches(selectFallback);
 
-      const orderField = orden === "stock-desc" || orden === "stock-asc" ? "stock" : "user_id";
-      const fallbackResult = await fallbackQuery
-        .order(orderField, { ascending: orden === "asc" || orden === "stock-asc" })
-        .range(from, to);
-
-      data = fallbackResult.data;
-      error = fallbackResult.error;
-      count = fallbackResult.count || 0;
-    } else {
-      data = enrichedResult.data;
-      error = enrichedResult.error;
-      count = enrichedResult.count || 0;
-    }
-
-    if (error) {
-      console.error("Error al obtener productos:", error);
+    if (result.error) {
+      console.error("Error al obtener productos:", result.error);
       setProductos([]);
       setVariantesByProducto({});
-      setTotalCount(0);
       showToast("Error al cargar productos", "error");
     } else {
-      const loadedProductos = data || [];
+      const loadedProductos = result.data || [];
       setProductos(loadedProductos);
-      setTotalCount(count || 0);
       await fetchVariantesPorProductos(loadedProductos);
     }
     setLoading(false);
@@ -145,34 +140,31 @@ export default function StockPage() {
       return;
     }
 
-    let data = null;
-
-    // Traer todas las variantes activas, incluidas las de stock 0
-    let withActiveQuery = supabase
-      .from("producto_variantes")
-      .select("producto_id, color, stock, stock_decimal, activo")
-      .in("producto_id", ids)
-      .eq("activo", true);
-    if (activeSucursalId) withActiveQuery = withActiveQuery.eq("sucursal_id", activeSucursalId);
-    const withActive = await withActiveQuery;
-
-    if (withActive.error) {
-      let fallbackQuery = supabase
+    const data = [];
+    for (let index = 0; index < ids.length; index += 200) {
+      const idBatch = ids.slice(index, index + 200);
+      let query = supabase
         .from("producto_variantes")
         .select("producto_id, color, stock, stock_decimal, activo")
-        .in("producto_id", ids);
-      if (activeSucursalId) fallbackQuery = fallbackQuery.eq("sucursal_id", activeSucursalId);
-      const fallback = await fallbackQuery;
+        .in("producto_id", idBatch)
+        .eq("activo", true);
+      if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+      let result = await query;
 
-      if (fallback.error) {
-        console.error("Error al obtener variantes de productos:", fallback.error);
+      if (result.error) {
+        let fallbackQuery = supabase
+          .from("producto_variantes")
+          .select("producto_id, color, stock, stock_decimal, activo")
+          .in("producto_id", idBatch);
+        if (activeSucursalId) fallbackQuery = fallbackQuery.eq("sucursal_id", activeSucursalId);
+        result = await fallbackQuery;
+      }
+      if (result.error) {
+        console.error("Error al obtener variantes de productos:", result.error);
         setVariantesByProducto({});
         return;
       }
-
-      data = fallback.data || [];
-    } else {
-      data = withActive.data || [];
+      data.push(...(result.data || []));
     }
 
     const productById = Object.fromEntries(
@@ -418,10 +410,10 @@ export default function StockPage() {
     return String(prod.categorias?.categori || prod.categoria || prod.category_id || "Sin categoria");
   }
 
-  const matchesFilters = useCallback((prod, searchTerm = search.trim().toLowerCase(), category = categoryFilter, stock = stockFilter) => {
+  const matchesFilters = useCallback((prod, searchTerm = search, category = categoryFilter, stock = stockFilter) => {
     const categoryName = getCategoryName(prod);
     const matchesSearch = !searchTerm || [prod.nombre, prod.codigo_barra, categoryName]
-      .some((value) => String(value || "").toLowerCase().includes(searchTerm));
+      .some((value) => matchesSearchValue(value, searchTerm));
     const matchesCategory = category === "all" || categoryName === category;
     const state = getStockState(prod);
     const highStockThreshold = 20;
@@ -765,21 +757,34 @@ export default function StockPage() {
     return Array.from(new Set(productos.map((prod) => getCategoryName(prod))));
   }, [availableCategories, productos]);
 
+  const allFilteredProductos = useMemo(() => {
+    return productos
+      .filter((prod) => matchesFilters(prod, search))
+      .sort((a, b) => {
+        if (orden === "stock-desc") return getBaseStock(b) - getBaseStock(a);
+        if (orden === "stock-asc") return getBaseStock(a) - getBaseStock(b);
+        const aId = Number(a?.user_id ?? a?.id ?? 0);
+        const bId = Number(b?.user_id ?? b?.id ?? 0);
+        return orden === "asc" ? aId - bId : bId - aId;
+      });
+  }, [productos, search, matchesFilters, orden]);
+
   const filteredProductos = useMemo(() => {
-    const searchTerm = search.trim().toLowerCase();
-    return productos.filter((prod) => matchesFilters(prod, searchTerm));
-  }, [productos, search, matchesFilters]);
+    const from = page * PAGE_SIZE;
+    return allFilteredProductos.slice(from, from + PAGE_SIZE);
+  }, [allFilteredProductos, page]);
 
   const kpis = useMemo(() => {
-    const total = filteredProductos.length;
-    const low = filteredProductos.filter((prod) => {
+    const total = allFilteredProductos.length;
+    const low = allFilteredProductos.filter((prod) => {
       const state = getStockState(prod);
       return state === "bajo" || state === "critico";
     }).length;
-    const out = filteredProductos.filter((prod) => getStockState(prod) === "sin-stock").length;
+    const out = allFilteredProductos.filter((prod) => getStockState(prod) === "sin-stock").length;
     return { total, low, out };
-  }, [filteredProductos, getStockState]);
+  }, [allFilteredProductos, getStockState]);
 
+  const totalCount = allFilteredProductos.length;
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
