@@ -670,7 +670,13 @@ export default function AdminProductosPage() {
             // La eliminación en cascada debería manejar las imágenes relacionadas
             let deleteQuery = supabase
                 .from('productos')
-                .update({ archivado: true, archivado_at: new Date().toISOString(), archivado_motivo: 'Archivado desde administración de productos' })
+                .update({
+                    archivado: true,
+                    archivado_at: new Date().toISOString(),
+                    archivado_motivo: 'Archivado desde administración de productos',
+                    category_id: null,
+                    codigo_barra: null,
+                })
                 // Usamos user_id como ID único del producto para filtrar
                 .eq('user_id', productToDelete.user_id);
             if (activeSucursalId) deleteQuery = deleteQuery.eq('sucursal_id', activeSucursalId);

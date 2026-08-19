@@ -34,7 +34,10 @@ export default function AdminCategorias() {
   }
 
   async function fetchProductos() {
-    let query = supabase.from("productos").select("*");
+    let query = supabase
+      .from("productos")
+      .select("user_id, category_id, categoria, archivado")
+      .or("archivado.eq.false,archivado.is.null");
     if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
     const { data, error } = await query;
     if (error) {
@@ -67,7 +70,25 @@ export default function AdminCategorias() {
   }
 
   async function handleEliminar(id) {
+    const activeProducts = productos.filter((product) => Number(product.category_id) === Number(id));
+    if (activeProducts.length > 0) {
+      showToast(`No se puede eliminar: quedan ${activeProducts.length} producto(s) activo(s) en esta categoría.`, "error");
+      return;
+    }
     if (!confirm("¿Eliminar esta categoría?")) return;
+
+    // Los productos archivados no deben bloquear el borrado de una categoría vacía.
+    let detachQuery = supabase
+      .from("productos")
+      .update({ category_id: null })
+      .eq("category_id", id)
+      .eq("archivado", true);
+    if (activeSucursalId) detachQuery = detachQuery.eq("sucursal_id", activeSucursalId);
+    const { error: detachError } = await detachQuery;
+    if (detachError) {
+      showToast(`No se pudo liberar la categoría: ${detachError.message}`, "error");
+      return;
+    }
 
     let query = supabase.from("categorias").delete().eq("id", id);
     if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
@@ -183,7 +204,7 @@ export default function AdminCategorias() {
               <div className="col-span-full text-center text-gray-500 p-8 bg-white rounded shadow">No hay categorías. Añade la primera categoría para organizar tu catálogo.</div>
             ) : (
               categorias.map((cat) => {
-                const count = productos.filter(p => p.categoria === cat.categori).length;
+                const count = productos.filter(p => Number(p.category_id) === Number(cat.id)).length;
                 return (
                   <div key={cat.id} className="bg-white rounded-lg shadow p-4 flex flex-col justify-between">
                     <div>

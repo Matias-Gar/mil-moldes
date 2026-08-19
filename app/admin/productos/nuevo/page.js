@@ -1505,7 +1505,8 @@ export default function AdminProductosPage() {
         let duplicateQuery = supabase
             .from("productos")
             .select("user_id")
-            .ilike("nombre", newProduct.nombre.trim());
+            .ilike("nombre", newProduct.nombre.trim())
+            .or("archivado.eq.false,archivado.is.null");
         if (activeSucursalId) duplicateQuery = duplicateQuery.eq('sucursal_id', activeSucursalId);
         const { data: productosConNombre, error: errorNombre } = await duplicateQuery;
         if (!errorNombre && productosConNombre && productosConNombre.length > 0) {
@@ -1555,6 +1556,21 @@ export default function AdminProductosPage() {
 
             const stockTotal = variantsPayload.reduce((sum, v) => sum + (Number(v.stock) || 0), 0);
             const codigoBarra = String(newProduct.codigo_barra || '').trim() || null;
+
+            // Compatibilidad con productos archivados antes de este arreglo:
+            // libera el mismo codigo para que no bloquee el alta nueva.
+            if (codigoBarra) {
+                let releaseArchivedCodeQuery = supabase
+                    .from('productos')
+                    .update({ codigo_barra: null })
+                    .eq('codigo_barra', codigoBarra)
+                    .eq('archivado', true);
+                if (activeSucursalId) releaseArchivedCodeQuery = releaseArchivedCodeQuery.eq('sucursal_id', activeSucursalId);
+                const { error: releaseArchivedCodeError } = await releaseArchivedCodeQuery;
+                if (releaseArchivedCodeError) {
+                    throw new Error(`No se pudo liberar el código de un producto eliminado: ${releaseArchivedCodeError.message}`);
+                }
+            }
 
             const unidadBaseNormalizada = String(newProduct.unidad_base || 'unidad').trim() || 'unidad';
             const unidadesAlternativasNormalizadas = Array.isArray(newProduct.unidades_alternativas)
@@ -1777,6 +1793,8 @@ export default function AdminProductosPage() {
                 archivado_at: new Date().toISOString(),
                 archivado_por: user?.id || null,
                 archivado_motivo: 'Archivado desde alta/gestión de productos',
+                category_id: null,
+                codigo_barra: null,
             }).eq('user_id', productToDelete.user_id);
             if (activeSucursalId) archiveQuery = archiveQuery.eq('sucursal_id', activeSucursalId);
             const { error } = await archiveQuery;
