@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../../../lib/SupabaseClient";
 import { CONFIG, whatsappUtils } from "../../../../lib/config";
 import { DEFAULT_STORE_SETTINGS, fetchStoreSettings } from "../../../../lib/storeSettings";
@@ -57,6 +57,7 @@ export default function StockPage() {
   const [printing, setPrinting] = useState(false);
   const [notifying, setNotifying] = useState(false);
   const [storeSettings, setStoreSettings] = useState(DEFAULT_STORE_SETTINGS);
+  const productsRequestIdRef = useRef(0);
 
   useEffect(() => {
     fetchProductos();
@@ -84,6 +85,7 @@ export default function StockPage() {
   }, [search, categoryFilter, stockFilter]);
 
   async function fetchProductos() {
+    const requestId = ++productsRequestIdRef.current;
     setLoading(true);
     const batchSize = 500;
     const selectWithMinimum = `
@@ -100,14 +102,19 @@ export default function StockPage() {
     const loadAllBatches = async (selectColumns) => {
       const rows = [];
       for (let from = 0; ; from += batchSize) {
-        let query = supabase
-          .from("productos")
-          .select(selectColumns)
-          .eq("archivado", false)
-          .order("user_id", { ascending: true })
-          .range(from, from + batchSize - 1);
-        if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
-        const result = await query;
+        let result = null;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          let query = supabase
+            .from("productos")
+            .select(selectColumns)
+            // Los productos creados antes de la migracion pueden tener NULL.
+            .or("archivado.eq.false,archivado.is.null")
+            .order("user_id", { ascending: true })
+            .range(from, from + batchSize - 1);
+          if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+          result = await query;
+          if (!result.error) break;
+        }
         if (result.error) return result;
         rows.push(...(result.data || []));
         if (!result.data || result.data.length < batchSize) return { data: rows, error: null };
@@ -117,26 +124,28 @@ export default function StockPage() {
     let result = await loadAllBatches(selectWithMinimum);
     if (result.error) result = await loadAllBatches(selectFallback);
 
+    // Una respuesta de la sucursal anterior nunca debe reemplazar la actual.
+    if (requestId !== productsRequestIdRef.current) return;
+
     if (result.error) {
       console.error("Error al obtener productos:", result.error);
-      setProductos([]);
-      setVariantesByProducto({});
-      showToast("Error al cargar productos", "error");
+      // Conservamos la ultima lista valida ante fallos temporales de red/Supabase.
+      showToast("No se pudo actualizar el inventario. Se mantienen los productos cargados.", "error");
     } else {
       const loadedProductos = result.data || [];
       setProductos(loadedProductos);
-      await fetchVariantesPorProductos(loadedProductos);
+      await fetchVariantesPorProductos(loadedProductos, requestId);
     }
-    setLoading(false);
+    if (requestId === productsRequestIdRef.current) setLoading(false);
   }
 
-  async function fetchVariantesPorProductos(productosPage) {
+  async function fetchVariantesPorProductos(productosPage, requestId = productsRequestIdRef.current) {
     const ids = (productosPage || [])
       .map((p) => p?.user_id ?? p?.id)
       .filter(Boolean);
 
     if (ids.length === 0) {
-      setVariantesByProducto({});
+      if (requestId === productsRequestIdRef.current) setVariantesByProducto({});
       return;
     }
 
@@ -161,7 +170,7 @@ export default function StockPage() {
       }
       if (result.error) {
         console.error("Error al obtener variantes de productos:", result.error);
-        setVariantesByProducto({});
+        // Un fallo de variantes no debe ocultar productos ni borrar datos previos.
         return;
       }
       data.push(...(result.data || []));
@@ -201,6 +210,7 @@ export default function StockPage() {
         .sort((a, b) => b.stock - a.stock || a.color.localeCompare(b.color, "es"));
     }
 
+    if (requestId !== productsRequestIdRef.current) return;
     setVariantesByProducto(normalized);
     setProductos((prev) => prev.map((prod) => {
       const pid = String(prod?.user_id ?? prod?.id ?? "");
@@ -769,10 +779,14 @@ export default function StockPage() {
       });
   }, [productos, search, matchesFilters, orden]);
 
+  const totalCount = allFilteredProductos.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages - 1);
+
   const filteredProductos = useMemo(() => {
-    const from = page * PAGE_SIZE;
+    const from = currentPage * PAGE_SIZE;
     return allFilteredProductos.slice(from, from + PAGE_SIZE);
-  }, [allFilteredProductos, page]);
+  }, [allFilteredProductos, currentPage]);
 
   const kpis = useMemo(() => {
     const total = allFilteredProductos.length;
@@ -783,9 +797,6 @@ export default function StockPage() {
     const out = allFilteredProductos.filter((prod) => getStockState(prod) === "sin-stock").length;
     return { total, low, out };
   }, [allFilteredProductos, getStockState]);
-
-  const totalCount = allFilteredProductos.length;
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
     <div className="w-full min-h-screen bg-gradient-to-b from-white via-slate-50 to-gray-100 px-4 py-10 sm:px-6 lg:px-8">
@@ -942,7 +953,7 @@ export default function StockPage() {
 
         <div className="mb-4 flex flex-col gap-2 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
           <span>Mostrando {filteredProductos.length} producto(s) de {totalCount}</span>
-          <span>Pagina {page + 1} de {totalPages}</span>
+          <span>Pagina {currentPage + 1} de {totalPages}</span>
         </div>
 
         {loading ? (
@@ -1079,17 +1090,17 @@ export default function StockPage() {
             <div className="mt-6 flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow">
               <button
                 type="button"
-                disabled={page === 0}
-                onClick={() => setPage((prev) => Math.max(0, prev - 1))}
+                disabled={currentPage === 0}
+                onClick={() => setPage(Math.max(0, currentPage - 1))}
                 className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50"
               >
                 Anterior
               </button>
-              <span className="text-sm text-slate-600">Pagina {page + 1} de {totalPages}</span>
+              <span className="text-sm text-slate-600">Pagina {currentPage + 1} de {totalPages}</span>
               <button
                 type="button"
-                disabled={page + 1 >= totalPages}
-                onClick={() => setPage((prev) => prev + 1)}
+                disabled={currentPage + 1 >= totalPages}
+                onClick={() => setPage(currentPage + 1)}
                 className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50"
               >
                 Siguiente
