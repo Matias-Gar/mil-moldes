@@ -49,7 +49,7 @@ function stressModel(iterations = 50000) {
   return { iterations, rejected, finalStock: branches, conserved: branches.reduce((a, b) => a + b, 0) };
 }
 
-const [products, variants, reconciliation, transfers, movements, saleDetails, sales, cutovers] = await Promise.all([
+const [products, variants, reconciliation, transfers, movements, saleDetails, sales, cutovers, auditEvents] = await Promise.all([
   all("productos", "user_id,nombre,stock,sucursal_id,archivado"),
   all("producto_variantes", "id,producto_id,color,stock,stock_decimal,sucursal_id,activo"),
   all("inventory_reconciliation", "producto_id,variante_id,nombre,color,stock_sistema,stock_reconstruido,diferencia,estado"),
@@ -58,11 +58,17 @@ const [products, variants, reconciliation, transfers, movements, saleDetails, sa
   all("ventas_detalle", "id,venta_id,producto_id,variante_id,cantidad_base,cantidad,created_at"),
   all("ventas", "id,estado"),
   all("inventory_cutover_balances", "producto_id,variante_id,cutover_at"),
+  all("business_audit_events", "event_type,created_at,metadata"),
 ]);
 
 const cutoverTimes = cutovers.map((row) => new Date(row.cutover_at).getTime()).filter(Number.isFinite);
 const globalCutover = cutoverTimes.length ? Math.min(...cutoverTimes) : Number.POSITIVE_INFINITY;
 const isPostCutover = (createdAt) => new Date(createdAt).getTime() >= globalCutover;
+const continuousGuardTimes = auditEvents
+  .filter((row) => row.event_type === "INVENTORY_CONTINUOUS_BASELINES_ENABLED")
+  .map((row) => new Date(row.created_at).getTime()).filter(Number.isFinite);
+const continuousGuardAt = continuousGuardTimes.length ? Math.min(...continuousGuardTimes) : globalCutover;
+const isAfterContinuousGuard = (createdAt) => new Date(createdAt).getTime() >= continuousGuardAt;
 
 const badReconciliation = reconciliation.filter((row) => String(row.estado).toUpperCase() !== "OK" || Math.abs(num(row.diferencia)) > 0.0001);
 if (badReconciliation.length) add("CRITICAL", "RECONCILIATION", `${badReconciliation.length} registros no cuadran`, badReconciliation.slice(0, 10));
@@ -100,10 +106,10 @@ for (const transfer of transfers) {
   const incoming = ledger.filter((row) => String(row.tipo).startsWith("transferencia_entrada"));
   if (!out.length || !incoming.length || Math.abs(out.reduce((s, r) => s + num(r.cantidad_base), 0) - incoming.reduce((s, r) => s + num(r.cantidad_base), 0)) > 0.0001) incompleteTransferLedger.push({ ...transfer, ledger_rows: ledger.length });
 }
-const malformedCurrent = malformedTransfers.filter((row) => isPostCutover(row.created_at));
-const malformedLegacy = malformedTransfers.filter((row) => !isPostCutover(row.created_at));
-const incompleteCurrent = incompleteTransferLedger.filter((row) => isPostCutover(row.created_at));
-const incompleteLegacy = incompleteTransferLedger.filter((row) => !isPostCutover(row.created_at));
+const malformedCurrent = malformedTransfers.filter((row) => isAfterContinuousGuard(row.created_at));
+const malformedLegacy = malformedTransfers.filter((row) => !isAfterContinuousGuard(row.created_at));
+const incompleteCurrent = incompleteTransferLedger.filter((row) => isAfterContinuousGuard(row.created_at));
+const incompleteLegacy = incompleteTransferLedger.filter((row) => !isAfterContinuousGuard(row.created_at));
 if (malformedCurrent.length) add("CRITICAL", "MALFORMED_TRANSFER", `${malformedCurrent.length} transferencias posteriores al blindaje inválidas o sin variante`, malformedCurrent.slice(0, 10));
 if (malformedLegacy.length) add("HISTORICAL", "MALFORMED_TRANSFER_LEGACY", `${malformedLegacy.length} transferencias históricas anteriores al blindaje sin variante`, malformedLegacy.slice(0, 10));
 if (incompleteCurrent.length) add("CRITICAL", "TRANSFER_LEDGER", `${incompleteCurrent.length} transferencias posteriores al blindaje sin par completo entrada/salida`, incompleteCurrent.slice(0, 10));
@@ -130,7 +136,7 @@ if (duplicateKeys.length) add("CRITICAL", "DUPLICATE_IDEMPOTENCY", `${duplicateK
 
 const stress = stressModel();
 const summary = {
-  scanned: { products: products.length, variants: variants.length, reconciliation: reconciliation.length, transfers: transfers.length, movements: movements.length, saleDetails: saleDetails.length, cutover: Number.isFinite(globalCutover) ? new Date(globalCutover).toISOString() : null },
+  scanned: { products: products.length, variants: variants.length, reconciliation: reconciliation.length, transfers: transfers.length, movements: movements.length, saleDetails: saleDetails.length, cutover: Number.isFinite(globalCutover) ? new Date(globalCutover).toISOString() : null, continuousGuard: Number.isFinite(continuousGuardAt) ? new Date(continuousGuardAt).toISOString() : null },
   stress,
   findings,
   result: findings.some((item) => item.severity === "CRITICAL") ? "FAIL" : "PASS",

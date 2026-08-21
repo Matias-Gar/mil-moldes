@@ -5,6 +5,7 @@ import { supabase } from "@/lib/SupabaseClient";
 import { useSucursalActiva } from "@/components/admin/SucursalContext";
 import { showToast } from "@/components/ui/Toast";
 import * as ventasService from "@/services/ventas.service";
+import { fetchAllRows, fetchRowsInChunks } from "@/lib/supabasePagination";
 
 const REASONS = ["Producto destinado a muestrario", "Falla de fábrica", "Producto dañado", "Pérdida o faltante físico", "Uso interno", "Otro"];
 const n = (value) => Number(value || 0);
@@ -46,9 +47,9 @@ export default function ReducirStockPage() {
     let cancelled = false;
     queueMicrotask(async () => {
       setLoading(true);
-      const { data: ps, error } = await supabase.from("productos")
+      const { data: ps, error } = await fetchAllRows((from, to) => supabase.from("productos")
         .select("user_id,nombre,categoria,codigo_barra,stock,unidad_base,unidades_alternativas,factor_conversion,categorias(categori)")
-        .eq("sucursal_id", activeSucursalId).eq("archivado", false).order("nombre");
+        .eq("sucursal_id", activeSucursalId).eq("archivado", false).order("nombre").order("user_id").range(from, to));
       if (cancelled) return;
       if (error) {
         showToast(error.message, "error");
@@ -57,8 +58,8 @@ export default function ReducirStockPage() {
       }
       const ids = (ps || []).map((p) => p.user_id);
       const [variantsResult, imagesResult] = await Promise.all([
-        ids.length ? supabase.from("producto_variantes").select("id,producto_id,color,sku,stock,stock_decimal,activo").in("producto_id", ids).eq("sucursal_id", activeSucursalId).eq("activo", true) : { data: [] },
-        ids.length ? supabase.from("productos_imagenes").select("producto_id,imagen_url,orden").in("producto_id", ids).order("orden") : { data: [] },
+        fetchRowsInChunks(ids, (chunk) => supabase.from("producto_variantes").select("id,producto_id,color,sku,stock,stock_decimal,activo").in("producto_id", chunk).eq("sucursal_id", activeSucursalId).eq("activo", true)),
+        fetchRowsInChunks(ids, (chunk) => supabase.from("producto_imagenes").select("producto_id,imagen_url").in("producto_id", chunk).eq("sucursal_id", activeSucursalId).order("id")),
       ]);
       if (cancelled) return;
       setProducts(ps || []);

@@ -7,6 +7,7 @@ import { Button } from "../../../../components/ui/button";
 import { registrarHistorialProducto } from "../../../../lib/productosHistorial";
 import { getOptimizedImageUrl, buildImageSrcSet } from "../../../../lib/imageOptimization";
 import { useSucursalActiva } from "../../../../components/admin/SucursalContext";
+import { fetchAllRows, fetchRowsInChunks } from "../../../../lib/supabasePagination";
 
 function normalizeText(value) {
   return String(value || "")
@@ -31,14 +32,13 @@ export default function ArchivarProductosPage() {
   useEffect(() => {
     async function fetchProductos() {
       setMessage("");
-      let query = supabase
-        .from("productos")
-        .select("user_id, nombre, precio, stock, categoria, codigo_barra, created_at, archivado")
-        .order("created_at", { ascending: false });
-
-      if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
-
-      const { data, error } = await query;
+      const { data, error } = await fetchAllRows((from, to) => {
+        let query = supabase.from("productos")
+          .select("user_id, nombre, precio, stock, categoria, codigo_barra, created_at, archivado")
+          .order("created_at", { ascending: false }).order("user_id", { ascending: false }).range(from, to);
+        if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+        return query;
+      });
       if (error) {
         setMessage(`No se pudieron cargar productos: ${error.message}`);
         return;
@@ -53,13 +53,11 @@ export default function ArchivarProductosPage() {
         return;
       }
 
-      let imgsQuery = supabase
-        .from("producto_imagenes")
-        .select("producto_id, imagen_url")
-        .in("producto_id", ids);
-      if (activeSucursalId) imgsQuery = imgsQuery.eq("sucursal_id", activeSucursalId);
-
-      const { data: imgs } = await imgsQuery;
+      const { data: imgs } = await fetchRowsInChunks(ids, (chunk) => {
+        let imgsQuery = supabase.from("producto_imagenes").select("producto_id, imagen_url").in("producto_id", chunk);
+        if (activeSucursalId) imgsQuery = imgsQuery.eq("sucursal_id", activeSucursalId);
+        return imgsQuery;
+      });
       const agrupadas = {};
       (Array.isArray(imgs) ? imgs : []).forEach((img) => {
         if (!agrupadas[img.producto_id]) agrupadas[img.producto_id] = [];

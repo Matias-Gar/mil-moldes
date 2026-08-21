@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/SupabaseClient";
 import { showToast } from "@/components/ui/Toast";
 import { useSucursalActiva } from "@/components/admin/SucursalContext";
+import { fetchAllRows } from "@/lib/supabasePagination";
 
-const SEARCH_LIMIT = 1200;
 
 function normalizeText(value) {
   return String(value || "").trim().toLowerCase();
@@ -149,7 +149,7 @@ export default function TransferenciaSucursalPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
 
-    let productosQuery = supabase
+    const { data: productosData, error: productosError } = await fetchAllRows((from, to) => supabase
       .from("productos")
       .select(`
         user_id,
@@ -165,10 +165,10 @@ export default function TransferenciaSucursalPage() {
         categorias (categori)
       `)
       .eq("sucursal_id", activeSucursalId)
+      .eq("archivado", false)
       .order("nombre", { ascending: true })
-      .limit(SEARCH_LIMIT);
-
-    const { data: productosData, error: productosError } = await productosQuery;
+      .order("user_id", { ascending: true })
+      .range(from, to));
     if (productosError) {
       console.error("Error cargando productos para transferencia:", productosError);
       showToast("No se pudieron cargar productos", "error");

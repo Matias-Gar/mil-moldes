@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { supabase } from '../lib/SupabaseClient';
+import { fetchAllRows } from '../lib/supabasePagination';
 import { PrecioConPromocion, calcularPrecioConPromocion, PromoCompactBanner } from '../lib/promociones';
 import { usePromociones } from '../lib/usePromociones';
 import { usePacks, calcularDescuentoPack } from '../lib/packs';
@@ -315,11 +316,13 @@ export default function Home() {
     setLoading(true);
     setError(null);
     try {
-      let catalogQuery = supabase
-        .from('v_productos_catalogo')
-        .select('producto_id, nombre, descripcion, precio_base, imagen_base, category_id, categoria, stock_total, codigo_barra, variantes');
-      if (activeSucursalId) catalogQuery = catalogQuery.eq('sucursal_id', activeSucursalId);
-      const { data, error } = await catalogQuery;
+      const { data, error } = await fetchAllRows((from, to) => {
+        let catalogQuery = supabase.from('v_productos_catalogo')
+          .select('producto_id, nombre, descripcion, precio_base, imagen_base, category_id, categoria, stock_total, codigo_barra, variantes')
+          .order('producto_id', { ascending: false }).range(from, to);
+        if (activeSucursalId) catalogQuery = catalogQuery.eq('sucursal_id', activeSucursalId);
+        return catalogQuery;
+      });
 
       if (error) {
         throw new Error(`Error al cargar productos: ${error.message}`);

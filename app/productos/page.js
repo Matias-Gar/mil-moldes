@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { usePromociones } from "@/lib/usePromociones";
 import { usePacks, calcularDescuentoPack } from "@/lib/packs";
 import { supabase } from "@/lib/SupabaseClient";
+import { fetchAllRows } from "@/lib/supabasePagination";
 import { DEFAULT_STORE_SETTINGS, fetchStoreSettings, resolveBranchWhatsapp } from "@/lib/storeSettings";
 import { PrecioConPromocion, calcularPrecioConPromocion, PromoCompactBanner } from "@/lib/promociones";
 import { getOptimizedImageUrl } from "@/lib/imageOptimization";
@@ -354,11 +355,13 @@ export default function CatalogoPage() {
     const fetchProductosYCategoriasYImagenes = async () => {
         if (sucursalesLoading) return;
         // Usar la misma vista pública que la home para evitar desajustes entre rutas.
-        let catalogQuery = supabase
-            .from('v_productos_catalogo')
-            .select('producto_id, nombre, descripcion, precio_base, imagen_base, category_id, categoria, stock_total, codigo_barra, variantes');
-        if (activeSucursalId) catalogQuery = catalogQuery.eq('sucursal_id', activeSucursalId);
-        const { data: productosData, error: productosError } = await catalogQuery;
+        const { data: productosData, error: productosError } = await fetchAllRows((from, to) => {
+            let catalogQuery = supabase.from('v_productos_catalogo')
+                .select('producto_id, nombre, descripcion, precio_base, imagen_base, category_id, categoria, stock_total, codigo_barra, variantes')
+                .order('producto_id', { ascending: false }).range(from, to);
+            if (activeSucursalId) catalogQuery = catalogQuery.eq('sucursal_id', activeSucursalId);
+            return catalogQuery;
+        });
         if (productosError || !productosData) {
             setProductos([]);
             setImagenesProductos({});
