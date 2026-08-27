@@ -124,6 +124,12 @@ function getEffectiveVariantStock(variant: { stock?: number | null; stock_decima
   return Math.max(0, Number.isFinite(decimal) ? decimal : legacy || 0);
 }
 
+function isSyntheticSingleVariant(variants: Producto['variantes']) {
+  if (!Array.isArray(variants) || variants.length !== 1) return false;
+  const label = String(variants[0]?.color || '').trim().toLocaleLowerCase('es');
+  return label === 'unico' || label === 'único' || label === 'sin color';
+}
+
 async function enriquecerUnidades(productos: Producto[], sucursalId?: string) {
   const ids = uniqueIds(productos.map((p) => p.user_id).filter(Boolean));
   if (ids.length === 0) return productos;
@@ -200,13 +206,19 @@ async function enriquecerUnidades(productos: Producto[], sucursalId?: string) {
     const variantes = Array.isArray(variantesReales) && variantesReales.length > 0
       ? variantesReales
       : producto.variantes;
+    // "Unico" is an internal stock/SKU row, not a customer-selectable variant.
+    // Its legacy price can become stale when the product price is edited, so it
+    // must always inherit the product's current base price.
+    const variantesConPrecio = isSyntheticSingleVariant(variantes)
+      ? variantes?.map((variante) => ({ ...variante, precio: Number(producto.precio ?? 0) }))
+      : variantes;
     const variantStock = Array.isArray(variantes) && variantes.length > 0
       ? variantes.reduce((acc, v) => acc + Math.max(0, Number(v.stock_decimal ?? v.stock ?? 0)), 0)
       : 0;
     const productStock = Number.isFinite(extra.stock) ? Math.max(0, extra.stock) : Math.max(0, Number(producto.stock || 0));
     return {
       ...producto,
-      variantes,
+      variantes: variantesConPrecio,
       unidad_base: extra.unidad_base,
       unidades_alternativas: extra.unidades_alternativas,
       unidades_disponibles: buildUnidadesDisponibles(extra.unidad_base, extra.unidades_alternativas),
