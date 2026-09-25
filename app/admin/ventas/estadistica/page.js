@@ -1,4 +1,6 @@
 "use client";
+import { fetchCompleteQuery } from "@/lib/supabasePagination";
+
 import { useEffect, useState } from "react";
 import { supabase } from "../../../../lib/SupabaseClient";
 import dynamic from "next/dynamic";
@@ -24,14 +26,14 @@ export default function VentasEstadisticaPage() {
         .from("ventas")
         .select("id, total, fecha, costos_extra, descuentos, cliente_nombre, modo_pago");
       if (activeSucursalId) ventasQuery = ventasQuery.eq("sucursal_id", activeSucursalId);
-      const { data, error } = await ventasQuery;
+      const { data, error } = await fetchCompleteQuery(ventasQuery, "id");
       if (!error && data) setVentas(data);
 
       let detallesQuery = supabase
         .from("ventas_detalle")
         .select("venta_id, producto_id, cantidad, precio_unitario, costo_unitario");
       if (activeSucursalId) detallesQuery = detallesQuery.eq("sucursal_id", activeSucursalId);
-      const { data: dets } = await detallesQuery;
+      const { data: dets } = await fetchCompleteQuery(detallesQuery, "id");
       if (dets) {
         setDetalles(dets);
       }

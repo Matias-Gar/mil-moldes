@@ -1,4 +1,5 @@
 "use client";
+import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/SupabaseClient";
@@ -232,10 +233,9 @@ export default function AumentarStockPage() {
         categorias (categori)
       `)
       .eq("archivado", false)
-      .order("nombre", { ascending: true })
-      .limit(1200);
+      .order("nombre", { ascending: true });
     if (activeSucursalId) productosQuery = productosQuery.eq("sucursal_id", activeSucursalId);
-    const { data: prods, error: prodsError } = await productosQuery;
+    const { data: prods, error: prodsError } = await fetchCompleteQuery(productosQuery, "user_id");
 
     if (prodsError) {
       console.error("Error cargando productos:", prodsError);
@@ -268,7 +268,7 @@ export default function AumentarStockPage() {
           .eq("activo", true)
           .order("color", { ascending: true });
         if (activeSucursalId) withActiveQuery = withActiveQuery.eq("sucursal_id", activeSucursalId);
-        const withActive = await withActiveQuery;
+        const withActive = await fetchCompleteQuery(withActiveQuery, "id");
         if (withActive.error) {
           let fallbackWithoutActiveQuery = supabase
             .from("producto_variantes")
@@ -276,7 +276,7 @@ export default function AumentarStockPage() {
             .in("producto_id", chunk)
             .order("color", { ascending: true });
           if (activeSucursalId) fallbackWithoutActiveQuery = fallbackWithoutActiveQuery.eq("sucursal_id", activeSucursalId);
-          const fallbackWithoutActive = await fallbackWithoutActiveQuery;
+          const fallbackWithoutActive = await fetchCompleteQuery(fallbackWithoutActiveQuery, "id");
           if (fallbackWithoutActive.error) {
             let minimalFallbackQuery = supabase
               .from("producto_variantes")
@@ -284,7 +284,7 @@ export default function AumentarStockPage() {
               .in("producto_id", chunk)
               .order("color", { ascending: true });
             if (activeSucursalId) minimalFallbackQuery = minimalFallbackQuery.eq("sucursal_id", activeSucursalId);
-            const minimalFallback = await minimalFallbackQuery;
+            const minimalFallback = await fetchCompleteQuery(minimalFallbackQuery, "id");
             if (minimalFallback.error) {
               console.warn("Variantes no disponibles en este esquema:", minimalFallback.error);
               vars = [];
@@ -321,12 +321,14 @@ export default function AumentarStockPage() {
     }
 
     if (productIds.length > 0) {
-      let imgsQuery = supabase
-        .from("producto_imagenes")
-        .select("producto_id, imagen_url")
-        .in("producto_id", productIds);
-      if (activeSucursalId) imgsQuery = imgsQuery.eq("sucursal_id", activeSucursalId);
-      const { data: imgs, error: imgsError } = await imgsQuery;
+
+      const { data: imgs, error: imgsError } = await fetchCompleteQuery(() => {
+        let scopedQuery = supabase
+          .from("producto_imagenes")
+          .select("producto_id, imagen_url");
+        if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+        return scopedQuery;
+      }, "id", { column: "producto_id", values: productIds });
       if (!imgsError && Array.isArray(imgs)) {
         const map = {};
         productosData.forEach((prod) => {

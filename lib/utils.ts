@@ -1,3 +1,4 @@
+import { fetchCompleteQuery } from "./supabasePagination.js";
 
 // --- TIPOS E INTERFACES ---
 
@@ -35,11 +36,11 @@ export async function sincronizarStockProducto(
 
   const productStock = Number((producto as any)?.stock ?? 0);
 
-  const { data } = await (supabase as any)
+  const { data } = await fetchCompleteQuery((supabase as any)
     .from("producto_variantes")
     .select("stock, stock_decimal")
     .eq("producto_id", producto_id)
-    .eq("activo", true);
+    .eq("activo", true), "id");
 
   const variantes: Variante[] = Array.isArray(data)
     ? data.map((v) => ({ ...v, color: (v as any).color ?? "", id: (v as any).id ?? undefined }))

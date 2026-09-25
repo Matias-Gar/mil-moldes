@@ -1,4 +1,5 @@
 "use client";
+import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
 import dynamic from 'next/dynamic';
 import { useEffect, useState, useRef } from 'react';
@@ -24,7 +25,6 @@ import CantidadConUnidadInput from '../../../../components/CantidadConUnidadInpu
 // Si la tabla usa react-barcode, este dynamic es necesario. Si solo usa la función handlePrintBarcode, se podría quitar.
 // Lo mantendremos por si acaso el componente de tabla lo usa internamente.
 const Barcode = dynamic(() => import('react-barcode'), { ssr: false });
-const SUPABASE_PAGE_SIZE = 1000;
 
 const DEFAULT_COLOR_PALETTE = [
     // Colores básicos
@@ -638,7 +638,7 @@ export default function AdminProductosPage() {
     useEffect(() => {
         async function loadPromociones() {
             try {
-                const { data, error } = await supabase.from("promociones").select("*");
+                const { data, error } = await fetchCompleteQuery(supabase.from("promociones").select("*"), "id");
                 if (!error && Array.isArray(data)) setPromociones(data);
                 else if (error) console.warn("Error cargando promociones:", error);
             } catch (e) {
@@ -1275,7 +1275,7 @@ export default function AdminProductosPage() {
             .select('id, categori')
             .order('categori', { ascending: true });
         if (activeSucursalId) query = query.eq('sucursal_id', activeSucursalId);
-        const { data, error } = await query;
+        const { data, error } = await fetchCompleteQuery(query);
         if (error) {
             setCategories([]);
             setMessage('Error al cargar categorias.');
@@ -1311,7 +1311,7 @@ export default function AdminProductosPage() {
             .eq('archivado', false)
             .order('created_at', { ascending: false });
         if (activeSucursalId) query = query.eq('sucursal_id', activeSucursalId);
-        let response = await query;
+        let response = await fetchCompleteQuery(query, "user_id");
 
         data = response.data;
         error = response.error;
@@ -1335,7 +1335,7 @@ export default function AdminProductosPage() {
                 .eq('archivado', false)
                 .order('created_at', { ascending: false });
             if (activeSucursalId) fallbackQuery = fallbackQuery.eq('sucursal_id', activeSucursalId);
-            response = await fallbackQuery;
+            response = await fetchCompleteQuery(fallbackQuery, "user_id");
 
             data = response.data;
             error = response.error;
@@ -1357,27 +1357,12 @@ export default function AdminProductosPage() {
         // 2. Traer imágenes de todos los productos
         const ids = formattedData.map(p => p.user_id);
         if (ids.length > 0) {
-            let imgs = [];
-            let imgsError = null;
-            let from = 0;
-            while (true) {
-                let imagesQuery = supabase
-                    .from('producto_imagenes')
-                    .select('producto_id, imagen_url')
-                    .in('producto_id', ids);
-                if (activeSucursalId) imagesQuery = imagesQuery.eq('sucursal_id', activeSucursalId);
-                imagesQuery = imagesQuery
-                    .order('id', { ascending: true })
-                    .range(from, from + SUPABASE_PAGE_SIZE - 1);
-                const { data, error } = await imagesQuery;
-                if (error) {
-                    imgsError = error;
-                    break;
-                }
-                imgs = [...imgs, ...(data || [])];
-                if (!data || data.length < SUPABASE_PAGE_SIZE) break;
-                from += SUPABASE_PAGE_SIZE;
-            }
+
+            const { data: imgs, error: imgsError } = await fetchCompleteQuery(() => {
+              let scopedQuery = supabase.from('producto_imagenes').select('producto_id, imagen_url');
+              if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+              return scopedQuery;
+            }, 'id', { column: 'producto_id', values: ids });
             if (!imgsError && imgs) {
                 // Agrupar por producto_id y filtrar URLs vacías/nulas/incorrectas
                 const agrupadas = {};
@@ -1394,13 +1379,14 @@ export default function AdminProductosPage() {
                 setImagenesProductos(agrupadas);
             }
 
-            let variantsQuery = supabase
+            const { data: varsData, error: varsError } = await fetchCompleteQuery(() => {
+              let scopedQuery = supabase
                 .from('producto_variantes')
                 .select('id, producto_id, color, stock, precio, sku, activo')
-                .in('producto_id', ids)
                 .order('color', { ascending: true });
-            if (activeSucursalId) variantsQuery = variantsQuery.eq('sucursal_id', activeSucursalId);
-            const { data: varsData, error: varsError } = await variantsQuery;
+              if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+              return scopedQuery;
+            }, "id", { column: "producto_id", values: ids });
             if (!varsError && Array.isArray(varsData)) {
                 const grouped = {};
                 varsData.forEach(v => {
@@ -1508,7 +1494,7 @@ export default function AdminProductosPage() {
             .ilike("nombre", newProduct.nombre.trim())
             .or("archivado.eq.false,archivado.is.null");
         if (activeSucursalId) duplicateQuery = duplicateQuery.eq('sucursal_id', activeSucursalId);
-        const { data: productosConNombre, error: errorNombre } = await duplicateQuery;
+        const { data: productosConNombre, error: errorNombre } = await fetchCompleteQuery(duplicateQuery, "user_id");
         if (!errorNombre && productosConNombre && productosConNombre.length > 0) {
             setShowNameRepeatModal(true);
             setLoading(false);
@@ -1675,8 +1661,8 @@ export default function AdminProductosPage() {
                     throw new Error(`Error al insertar variantes: ${variantsError.message}`);
                 }
 
-                const { data: insertedVariants, error: insertedVariantsError } = await supabase
-                    .from('producto_variantes').select('id,color,sku').eq('producto_id', productoId);
+                const { data: insertedVariants, error: insertedVariantsError } = await fetchCompleteQuery(supabase
+                    .from('producto_variantes').select('id,color,sku').eq('producto_id', productoId), "id");
                 if (insertedVariantsError) throw insertedVariantsError;
                 const user = (await supabase.auth.getUser())?.data?.user;
                 for (const draft of variantsPayload) {

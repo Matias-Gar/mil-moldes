@@ -1,4 +1,6 @@
 "use client";
+import { fetchCompleteQuery } from "@/lib/supabasePagination";
+
 import { useEffect, useState } from "react";
 import { supabase } from "../../../../lib/SupabaseClient";
 import dynamic from "next/dynamic";
@@ -29,10 +31,9 @@ export default function InventarioEstadisticaPage() {
       // 1) productos
       let prodsQuery = supabase
         .from("productos")
-        .select("user_id, nombre, precio, stock, categoria")
-        .limit(5000);
+        .select("user_id, nombre, precio, stock, categoria");
       if (activeSucursalId) prodsQuery = prodsQuery.eq("sucursal_id", activeSucursalId);
-      const { data: prodsData } = await prodsQuery;
+      const { data: prodsData } = await fetchCompleteQuery(prodsQuery, "user_id");
       const prods = Array.isArray(prodsData) ? prodsData : [];
       setProductos(prods);
 
@@ -48,7 +49,7 @@ export default function InventarioEstadisticaPage() {
         .lte("fecha", toDate.toISOString())
         .order("fecha", { ascending: true });
       if (activeSucursalId) ventasQuery = ventasQuery.eq("sucursal_id", activeSucursalId);
-      const { data: ventasData } = await ventasQuery;
+      const { data: ventasData } = await fetchCompleteQuery(ventasQuery, "id");
       const vData = Array.isArray(ventasData) ? ventasData : [];
       setVentas(vData);
 
@@ -56,12 +57,14 @@ export default function InventarioEstadisticaPage() {
       const ventaIds = vData.map(v => v.id).filter(Boolean);
       let dets = [];
       if (ventaIds.length > 0) {
-        let detallesQuery = supabase
-          .from("ventas_detalle")
-          .select("venta_id, producto_id, cantidad, precio_unitario")
-          .in("venta_id", ventaIds);
-        if (activeSucursalId) detallesQuery = detallesQuery.eq("sucursal_id", activeSucursalId);
-        const { data: detData } = await detallesQuery;
+
+        const { data: detData } = await fetchCompleteQuery(() => {
+          let scopedQuery = supabase
+            .from("ventas_detalle")
+            .select("venta_id, producto_id, cantidad, precio_unitario");
+          if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+          return scopedQuery;
+        }, "id", { column: "venta_id", values: ventaIds });
         dets = Array.isArray(detData) ? detData : [];
       }
       setDetalles(dets);

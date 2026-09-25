@@ -1,3 +1,4 @@
+import { fetchCompleteQuery } from "../../../../lib/supabasePagination.js";
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
@@ -63,7 +64,7 @@ function calcularPrecioConPromocion(producto, promociones) {
 export async function GET() {
   try {
     // 1. Obtener productos de la base de datos
-    const { data: productos, error: productosError } = await supabase
+    const { data: productos, error: productosError } = await fetchCompleteQuery(supabase
       .from('productos')
       .select(`
         user_id,
@@ -77,17 +78,17 @@ export async function GET() {
         )
       `)
       .eq('archivado', false)
-      .gt('stock', 0); // Solo productos con stock
+      .gt('stock', 0), "user_id"); // Solo productos con stock
 
     if (productosError) {
       throw new Error(`Error al obtener productos: ${productosError.message}`);
     }
 
     // 2. Obtener promociones activas
-    const { data: promociones, error: promocionesError } = await supabase
+    const { data: promociones, error: promocionesError } = await fetchCompleteQuery(supabase
       .from('promociones')
       .select('*')
-      .eq('activa', true);
+      .eq('activa', true), "id");
 
     if (promocionesError) {
       console.warn('Error al obtener promociones:', promocionesError.message);
@@ -95,10 +96,9 @@ export async function GET() {
 
     // 3. Obtener imágenes de productos
     const productIds = productos.map(p => p.user_id);
-    const { data: imagenes, error: imagenesError } = await supabase
+    const { data: imagenes, error: imagenesError } = await fetchCompleteQuery(() => supabase
       .from('producto_imagenes')
-      .select('producto_id, imagen_url')
-      .in('producto_id', productIds);
+      .select('producto_id, imagen_url'), "id", { column: "producto_id", values: productIds });
 
     if (imagenesError) {
       console.warn('Error al obtener imágenes:', imagenesError.message);

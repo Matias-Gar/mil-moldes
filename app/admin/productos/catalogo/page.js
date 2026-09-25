@@ -1,4 +1,6 @@
 "use client";
+import { fetchCompleteQuery } from "@/lib/supabasePagination";
+
 import React, { useEffect, useState } from "react";
 import { supabase } from "../../../../lib/SupabaseClient";
 import { useRouter } from "next/navigation";
@@ -84,7 +86,7 @@ export default function CatalogoPage() {
 
         let catsQuery = supabase.from("categorias").select("*");
         if (activeSucursalId) catsQuery = catsQuery.eq("sucursal_id", activeSucursalId);
-        const { data: catsData } = await catsQuery;
+        const { data: catsData } = await fetchCompleteQuery(catsQuery, "id");
         const categorias = Array.isArray(catsData) ? catsData : [];
         setCategoriasDisponibles(categorias.map(c => c.nombre || c.categori || `Cat-${c.id}`));
 
@@ -92,22 +94,23 @@ export default function CatalogoPage() {
           .from("productos")
           .select("user_id, nombre, descripcion, precio, stock, imagen_url, category_id, codigo_barra, vista_producto, unidad_base, unidades_alternativas, factor_conversion, categorias (categori)")
           .eq("archivado", false)
-          .order("created_at", { ascending: false })
-          .limit(1000);
+          .order("created_at", { ascending: false });
         if (activeSucursalId) prodsQuery = prodsQuery.eq("sucursal_id", activeSucursalId);
-        const { data: prodsData } = await prodsQuery;
+        const { data: prodsData } = await fetchCompleteQuery(prodsQuery, "user_id");
         const prods = Array.isArray(prodsData) ? prodsData : [];
 
         const productIds = prods.map(p => p.user_id).filter(Boolean);
 
         let imagenesMap = {};
         if (productIds.length) {
-          let imgsQuery = supabase
-            .from("producto_imagenes")
-            .select("producto_id, imagen_url")
-            .in("producto_id", productIds);
-          if (activeSucursalId) imgsQuery = imgsQuery.eq("sucursal_id", activeSucursalId);
-          const { data: imgsData } = await imgsQuery;
+
+          const { data: imgsData } = await fetchCompleteQuery(() => {
+            let scopedQuery = supabase
+              .from("producto_imagenes")
+              .select("producto_id, imagen_url");
+            if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+            return scopedQuery;
+          }, "id", { column: "producto_id", values: productIds });
           const imgs = Array.isArray(imgsData) ? imgsData : [];
           imagenesMap = imgs.reduce((acc, it) => {
             const id = String(it.producto_id);
@@ -119,13 +122,15 @@ export default function CatalogoPage() {
 
         let variantesMap = {};
         if (productIds.length) {
-          let varsQuery = supabase
-            .from("producto_variantes")
-            .select("id, producto_id, color, stock, stock_decimal, precio, sku, activo")
-            .in("producto_id", productIds)
-            .order("color", { ascending: true });
-          if (activeSucursalId) varsQuery = varsQuery.eq("sucursal_id", activeSucursalId);
-          const { data: varsData } = await varsQuery;
+
+          const { data: varsData } = await fetchCompleteQuery(() => {
+            let scopedQuery = supabase
+              .from("producto_variantes")
+              .select("id, producto_id, color, stock, stock_decimal, precio, sku, activo")
+              .order("color", { ascending: true });
+            if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+            return scopedQuery;
+          }, "id", { column: "producto_id", values: productIds });
           const vars = Array.isArray(varsData) ? varsData : [];
           variantesMap = vars.reduce((acc, it) => {
             const pid = String(it.producto_id);

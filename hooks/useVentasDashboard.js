@@ -1,3 +1,4 @@
+import { fetchCompleteQuery } from "../lib/supabasePagination.js";
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/SupabaseClient';
 
@@ -102,7 +103,7 @@ export function useVentasDashboard(sucursalId = null) {
           .select('id, cliente_nombre, total, pago, cambio, fecha, descuentos, costos_extra, modo_pago')
           .order('fecha', { ascending: false });
         if (sucursalId) ventasQuery = ventasQuery.eq('sucursal_id', sucursalId);
-        const { data: ventasData, error: ventasError } = await ventasQuery;
+        const { data: ventasData, error: ventasError } = await fetchCompleteQuery(ventasQuery, "id");
 
         if (ventasError) throw ventasError;
 
@@ -137,14 +138,14 @@ export function useVentasDashboard(sucursalId = null) {
             )
           `);
         if (sucursalId) detalleQuery = detalleQuery.eq('sucursal_id', sucursalId);
-        const detalleEnriquecido = await detalleQuery;
+        const detalleEnriquecido = await fetchCompleteQuery(detalleQuery, "id");
 
         if (detalleEnriquecido.error) {
           let fallbackQuery = supabase
             .from('ventas_detalle')
             .select('*');
           if (sucursalId) fallbackQuery = fallbackQuery.eq('sucursal_id', sucursalId);
-          const detalleFallback = await fallbackQuery;
+          const detalleFallback = await fetchCompleteQuery(fallbackQuery, "id");
           if (detalleFallback.error) throw detalleEnriquecido.error;
           detallesData = detalleFallback.data || [];
         } else {
@@ -170,9 +171,11 @@ export function useVentasDashboard(sucursalId = null) {
         let products = [];
         if (productIds.size > 0) {
           const ids = Array.from(productIds);
-          let productsQuery = supabase
-            .from('productos')
-            .select(`
+
+          const { data: productsData, error: productsError } = await fetchCompleteQuery(() => {
+            let scopedQuery = supabase
+              .from('productos')
+              .select(`
               user_id,
               nombre,
               precio_compra,
@@ -183,12 +186,12 @@ export function useVentasDashboard(sucursalId = null) {
               unidades_alternativas,
               factor_conversion,
               categorias (
-                categori
+              categori
               )
-            `)
-            .in('user_id', ids);
-          if (sucursalId) productsQuery = productsQuery.eq('sucursal_id', sucursalId);
-          const { data: productsData, error: productsError } = await productsQuery;
+              `);
+            if (sucursalId) scopedQuery = scopedQuery.eq("sucursal_id", sucursalId);
+            return scopedQuery;
+          }, "user_id", { column: "user_id", values: ids });
 
           if (productsError) throw productsError;
           products = Array.isArray(productsData) ? productsData : [];
@@ -198,7 +201,7 @@ export function useVentasDashboard(sucursalId = null) {
           .from('ventas_pagos')
           .select('venta_id, monto, metodo_pago, fecha');
         if (sucursalId) pagosQuery = pagosQuery.eq('sucursal_id', sucursalId);
-        const pagosResult = await pagosQuery;
+        const pagosResult = await fetchCompleteQuery(pagosQuery, "id");
         const pagosData = pagosResult.error ? [] : (pagosResult.data || []);
         const pagosMap = {};
         pagosData.forEach((pago) => {

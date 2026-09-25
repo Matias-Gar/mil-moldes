@@ -1,3 +1,4 @@
+import { fetchCompleteQuery } from "../../../../lib/supabasePagination.js";
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
@@ -59,7 +60,7 @@ export async function GET(request) {
 
 async function obtenerProductosConDatos() {
   // Obtener productos
-  const { data: productos, error: productosError } = await supabase
+  const { data: productos, error: productosError } = await fetchCompleteQuery(supabase
     .from('productos')
     .select(`
       user_id,
@@ -73,22 +74,21 @@ async function obtenerProductosConDatos() {
       )
     `)
     .eq('archivado', false)
-    .gt('stock', 0);
+    .gt('stock', 0), "user_id");
 
   if (productosError) throw new Error(`Error al obtener productos: ${productosError.message}`);
 
   // Obtener promociones
-  const { data: promociones } = await supabase
+  const { data: promociones } = await fetchCompleteQuery(supabase
     .from('promociones')
     .select('*')
-    .eq('activa', true);
+    .eq('activa', true), "id");
 
   // Obtener imágenes
   const productIds = productos.map(p => p.user_id);
-  const { data: imagenes } = await supabase
+  const { data: imagenes } = await fetchCompleteQuery(() => supabase
     .from('producto_imagenes')
-    .select('producto_id, imagen_url')
-    .in('producto_id', productIds);
+    .select('producto_id, imagen_url'), "id", { column: "producto_id", values: productIds });
 
   // Agrupar imágenes
   const imagenesAgrupadas = {};
@@ -223,10 +223,10 @@ async function generarCatalogoPromociones(formato) {
 }
 
 async function listarCategorias() {
-  const { data: categorias, error } = await supabase
+  const { data: categorias, error } = await fetchCompleteQuery(supabase
     .from('categorias')
     .select('id, categori')
-    .order('categori');
+    .order('categori'), "id");
 
   if (error) throw new Error(`Error al obtener categorías: ${error.message}`);
 

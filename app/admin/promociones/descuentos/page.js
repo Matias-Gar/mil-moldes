@@ -1,4 +1,5 @@
 "use client";
+import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
 import { useEffect, useState } from "react";
 import { supabase } from "../../../../lib/SupabaseClient";
@@ -41,7 +42,7 @@ export default function PromocionesDescuentosPage() {
         .order('activa', { ascending: false }) // Primero las activas
         .order('id', { ascending: false });
       if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
-      const { data: promocionesData, error: promoError } = await query;
+      const { data: promocionesData, error: promoError } = await fetchCompleteQuery(query);
 
       if (promoError) {
         console.error("Error al cargar promociones:", promoError);

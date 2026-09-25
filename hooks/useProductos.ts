@@ -1,3 +1,4 @@
+import { fetchCompleteQuery } from "../lib/supabasePagination.js";
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/SupabaseClient';
 
@@ -44,7 +45,6 @@ interface VarianteBusqueda {
   sku?: string;
 }
 
-const SUPABASE_PAGE_SIZE = 1000;
 const SUPABASE_IN_CHUNK_SIZE = 200;
 
 function chunkArray<T>(items: T[], size = SUPABASE_IN_CHUNK_SIZE) {
@@ -71,42 +71,21 @@ function agruparImagenes(imgs: Array<{ producto_id: string | number; imagen_url?
 }
 
 async function fetchAllCatalogRows(selectFields: string, sucursalId?: string) {
-  let rows: Array<Record<string, unknown>> = [];
-  let from = 0;
-  while (true) {
-    let query = supabase
-      .from('v_productos_catalogo')
-      .select(selectFields)
-      .range(from, from + SUPABASE_PAGE_SIZE - 1);
+  let query = supabase.from('v_productos_catalogo').select(selectFields);
     if (sucursalId) query = query.eq('sucursal_id', sucursalId);
-    const { data, error } = await query;
+  const { data, error } = await fetchCompleteQuery(query, 'producto_id');
     if (error) throw error;
-    rows = [...rows, ...((Array.isArray(data) ? data : []) as unknown as Array<Record<string, unknown>>)];
-    if (!data || data.length < SUPABASE_PAGE_SIZE) break;
-    from += SUPABASE_PAGE_SIZE;
-  }
-  return rows;
+  return data as Array<Record<string, unknown>>;
 }
 
 async function fetchImagesForProductIds(ids: Array<string | number>, sucursalId?: string) {
-  let rows: Array<{ producto_id: string | number; imagen_url?: string }> = [];
-  for (const chunk of chunkArray(uniqueIds(ids))) {
-    let from = 0;
-    while (true) {
-      let query = supabase
-        .from('producto_imagenes')
-        .select('producto_id, imagen_url')
-        .in('producto_id', chunk)
-        .range(from, from + SUPABASE_PAGE_SIZE - 1);
+  const { data, error } = await fetchCompleteQuery(() => {
+    let query = supabase.from('producto_imagenes').select('producto_id, imagen_url');
       if (sucursalId) query = query.eq('sucursal_id', sucursalId);
-      const { data, error } = await query;
+    return query;
+  }, 'id', { column: 'producto_id', values: ids });
       if (error) throw error;
-      rows = [...rows, ...((Array.isArray(data) ? data : []) as unknown as Array<{ producto_id: string | number; imagen_url?: string }>)];
-      if (!data || data.length < SUPABASE_PAGE_SIZE) break;
-      from += SUPABASE_PAGE_SIZE;
-    }
-  }
-  return rows;
+  return data as Array<{ producto_id: string | number; imagen_url?: string }>;
 }
 
 function buildUnidadesDisponibles(unidadBase?: string, unidadesAlternativas?: string[]) {
@@ -166,7 +145,7 @@ async function enriquecerUnidades(productos: Producto[], sucursalId?: string) {
       variantesQuery = variantesQuery.eq('sucursal_id', sucursalId);
     }
 
-    const [{ data }, { data: variantRows }] = await Promise.all([productosQuery, variantesQuery]);
+    const [{ data }, { data: variantRows }] = await Promise.all([fetchCompleteQuery(productosQuery, "user_id"), fetchCompleteQuery(variantesQuery)]);
     productRows.push(...((Array.isArray(data) ? data : []) as typeof productRows));
     variantRowsAll.push(...((Array.isArray(variantRows) ? variantRows : []) as typeof variantRowsAll));
   }
@@ -303,7 +282,7 @@ export function useProductos(_includeCost = false, sucursalId?: string) {
           variantQuery = variantQuery.eq('sku', term);
         }
 
-        const { data: variantMatches } = await variantQuery;
+        const { data: variantMatches } = await fetchCompleteQuery(variantQuery, "id");
 
         if (Array.isArray(variantMatches) && variantMatches.length > 0) {
           const matchedVariants = (variantMatches as VarianteBusqueda[]).filter((variant) => matchesBarcode(term, variant.sku));

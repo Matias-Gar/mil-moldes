@@ -1,3 +1,4 @@
+import { fetchCompleteQuery } from "../lib/supabasePagination.js";
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/SupabaseClient";
 
@@ -34,17 +35,17 @@ export function useBusinessIntelligence() {
     const start = new Date();
     start.setDate(today.getDate() - 29);
 
-    const { data: ventas } = await supabase
+    const { data: ventas } = await fetchCompleteQuery(supabase
       .from("ventas")
       .select("*")
       .gte("fecha", start.toISOString())
-      .lte("fecha", today.toISOString());
+      .lte("fecha", today.toISOString()), "id");
 
-    const { data: movimientos } = await supabase
+    const { data: movimientos } = await fetchCompleteQuery(supabase
       .from("cash_movements")
       .select("*")
       .gte("date", start.toISOString())
-      .lte("date", today.toISOString());
+      .lte("date", today.toISOString()), "id");
 
     // =========================
     // 🔢 AGRUPACIÓN BASE

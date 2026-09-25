@@ -1,3 +1,4 @@
+import { fetchCompleteQuery } from "../lib/supabasePagination.js";
 export async function insertarVentaPago(pago: GenericPayload) {
   // Limpiar claves undefined o null
   const cleanPago: GenericPayload = { ...pago };
@@ -143,10 +144,10 @@ export async function guardarCarritoPendiente(payload: GenericPayload) {
 }
 
 export async function fetchCarritosPendientes() {
-  return supabase
+  return fetchCompleteQuery(supabase
     .from('carritos_pendientes')
     .select('id, cliente_nombre, cliente_telefono, productos, fecha')
-    .order('fecha', { ascending: false });
+    .order('fecha', { ascending: false }));
 }
 
 export async function eliminarCarritoPendiente(id: ProductoId) {

@@ -1,4 +1,5 @@
 "use client";
+import { fetchCompleteQuery } from "../../../../lib/supabasePagination.js";
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/SupabaseClient";
@@ -58,8 +59,8 @@ export default function ReducirStockPage() {
       }
       const ids = (ps || []).map((p) => p.user_id);
       const [variantsResult, imagesResult] = await Promise.all([
-        fetchRowsInChunks(ids, (chunk) => supabase.from("producto_variantes").select("id,producto_id,color,sku,stock,stock_decimal,activo").in("producto_id", chunk).eq("sucursal_id", activeSucursalId).eq("activo", true)),
-        fetchRowsInChunks(ids, (chunk) => supabase.from("producto_imagenes").select("producto_id,imagen_url").in("producto_id", chunk).eq("sucursal_id", activeSucursalId).order("id")),
+        fetchRowsInChunks(ids, (chunk) => fetchCompleteQuery(supabase.from("producto_variantes").select("id,producto_id,color,sku,stock,stock_decimal,activo").in("producto_id", chunk).eq("sucursal_id", activeSucursalId).eq("activo", true))),
+        fetchRowsInChunks(ids, (chunk) => fetchCompleteQuery(supabase.from("producto_imagenes").select("producto_id,imagen_url").in("producto_id", chunk).eq("sucursal_id", activeSucursalId).order("id"))),
       ]);
       if (cancelled) return;
       setProducts(ps || []);

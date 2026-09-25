@@ -1,4 +1,5 @@
 "use client";
+import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
 import React, { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
@@ -307,7 +308,7 @@ export default function Home() {
       .select('id, categori')
       .order('categori', { ascending: true });
     if (activeSucursalId) query = query.eq('sucursal_id', activeSucursalId);
-    const { data, error } = await query;
+    const { data, error } = await fetchCompleteQuery(query);
     if (!error && data) setCategorias(data);
   };
 
@@ -356,21 +357,22 @@ export default function Home() {
       let viewsById = {};
       let variantsByProductId = {};
       if (ids.length > 0) {
-        let productDetailsQuery = supabase
-          .from('productos')
-          .select('user_id, vista_producto, unidad_base, unidades_alternativas, factor_conversion, stock')
-          .in('user_id', ids);
-        let variantsQuery = supabase
-          .from('producto_variantes')
-          .select('producto_id, id, color, stock, stock_decimal, precio, imagen_url, sku')
-          .in('producto_id', ids);
-        if (activeSucursalId) {
-          productDetailsQuery = productDetailsQuery.eq('sucursal_id', activeSucursalId);
-          variantsQuery = variantsQuery.eq('sucursal_id', activeSucursalId);
-        }
+
         const [{ data: viewRows }, { data: variantRows }] = await Promise.all([
-          productDetailsQuery,
-          variantsQuery,
+          fetchCompleteQuery(() => {
+            let scopedQuery = supabase
+              .from('productos')
+              .select('user_id, vista_producto, unidad_base, unidades_alternativas, factor_conversion, stock');
+            if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+            return scopedQuery;
+          }, "user_id", { column: "user_id", values: ids }),
+          fetchCompleteQuery(() => {
+            let scopedQuery = supabase
+              .from('producto_variantes')
+              .select('producto_id, id, color, stock, stock_decimal, precio, imagen_url, sku');
+            if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+            return scopedQuery;
+          }, "id", { column: "producto_id", values: ids }),
         ]);
         viewsById = Object.fromEntries(
           (Array.isArray(viewRows) ? viewRows : []).map((row) => [
@@ -424,12 +426,14 @@ export default function Home() {
       // Buscar imágenes
       const visibleIds = visibleProducts.map(p => p.user_id);
       if (visibleIds.length > 0) {
-        let imgsQuery = supabase
-          .from('producto_imagenes')
-          .select('producto_id, imagen_url')
-          .in('producto_id', visibleIds);
-        if (activeSucursalId) imgsQuery = imgsQuery.eq('sucursal_id', activeSucursalId);
-        const { data: imgs, error: imgsError } = await imgsQuery;
+
+        const { data: imgs, error: imgsError } = await fetchCompleteQuery(() => {
+          let scopedQuery = supabase
+            .from('producto_imagenes')
+            .select('producto_id, imagen_url');
+          if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+          return scopedQuery;
+        }, "id", { column: "producto_id", values: visibleIds });
         if (!imgsError && imgs) {
           const agrupadas = {};
           imgs.forEach(img => {

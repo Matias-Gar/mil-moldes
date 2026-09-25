@@ -1,4 +1,5 @@
 "use client";
+import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -51,23 +52,22 @@ export default function LimpiezaVentasPage() {
       let ventasQuery = supabase
         .from("ventas")
         .select("id, cliente_nombre, cliente_telefono, total, fecha, estado, modo_pago, usuario_email, error_message, costos_extra")
-        .order("fecha", { ascending: false })
-        .limit(300);
+        .order("fecha", { ascending: false });
       if (activeSucursalId) ventasQuery = ventasQuery.eq("sucursal_id", activeSucursalId);
-      const { data: ventasData, error: ventasError } = await ventasQuery;
+      const { data: ventasData, error: ventasError } = await fetchCompleteQuery(ventasQuery);
       if (ventasError) throw ventasError;
 
       const ids = (ventasData || []).map((v) => v.id);
       const scopeSucursal = (query) => activeSucursalId ? query.eq("sucursal_id", activeSucursalId) : query;
       const [detallesRes, pagosRes, movimientosRes] = await Promise.all([
         ids.length
-          ? scopeSucursal(supabase.from("ventas_detalle").select("id, venta_id").in("venta_id", ids))
+          ? fetchCompleteQuery(() => scopeSucursal(supabase.from("ventas_detalle").select("id, venta_id")), "id", { column: "venta_id", values: ids })
           : Promise.resolve({ data: [] }),
         ids.length
-          ? scopeSucursal(supabase.from("ventas_pagos").select("id, venta_id").in("venta_id", ids))
+          ? fetchCompleteQuery(() => scopeSucursal(supabase.from("ventas_pagos").select("id, venta_id")), "id", { column: "venta_id", values: ids })
           : Promise.resolve({ data: [] }),
         ids.length
-          ? scopeSucursal(supabase.from("stock_movimientos").select("id, venta_id, observaciones").in("venta_id", ids))
+          ? fetchCompleteQuery(() => scopeSucursal(supabase.from("stock_movimientos").select("id, venta_id, observaciones")), "id", { column: "venta_id", values: ids })
           : Promise.resolve({ data: [] }),
       ]);
       if (detallesRes.error) throw detallesRes.error;

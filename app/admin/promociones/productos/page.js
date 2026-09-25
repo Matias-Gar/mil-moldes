@@ -1,4 +1,5 @@
 "use client";
+import { fetchCompleteQuery } from "../../../../lib/supabasePagination.js";
 
 import { useEffect, useState } from "react";
 import { supabase } from "../../../../lib/SupabaseClient";
@@ -50,7 +51,7 @@ export default function PromocionesProductosPage() {
         .eq("archivado", false)
         .order('nombre');
       if (activeSucursalId) productosQuery = productosQuery.eq("sucursal_id", activeSucursalId);
-      const { data: productosData, error: prodError } = await productosQuery;
+      const { data: productosData, error: prodError } = await fetchCompleteQuery(productosQuery, "user_id");
 
       // Cargar promociones
       let promosQuery = supabase
@@ -58,7 +59,7 @@ export default function PromocionesProductosPage() {
         .select("*")
         .order('id', { ascending: false });
       if (activeSucursalId) promosQuery = promosQuery.eq("sucursal_id", activeSucursalId);
-      const { data: promosData, error: promoError } = await promosQuery;
+      const { data: promosData, error: promoError } = await fetchCompleteQuery(promosQuery, "id");
 
       if (prodError) {
         console.error("Error específico productos:", prodError);

@@ -1,4 +1,6 @@
 "use client";
+import { fetchCompleteQuery } from "../../../lib/supabasePagination.js";
+
 import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/SupabaseClient";
 
@@ -44,10 +46,10 @@ export default function PerfilesAdminPage() {
   }, []);
 
   const cargarPerfiles = async () => {
-    const { data } = await supabase
+    const { data } = await fetchCompleteQuery(supabase
       .from('perfiles')
       .select('*')
-      .order('nombre');
+      .order('nombre'), "id");
     
     if (data) setPerfiles(data);
   };

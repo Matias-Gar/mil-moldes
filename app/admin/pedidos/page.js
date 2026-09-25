@@ -1,4 +1,6 @@
 "use client";
+import { fetchCompleteQuery } from "../../../lib/supabasePagination.js";
+
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../lib/SupabaseClient";
@@ -22,7 +24,7 @@ export default function PedidosPage() {
       .eq("estado", "pendiente")
       .order("fecha", { ascending: false });
     if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
-    const { data, error } = await query;
+    const { data, error } = await fetchCompleteQuery(query, "id");
     
     if (!error && data) {
       const currentDate = new Date();

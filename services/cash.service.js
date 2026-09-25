@@ -1,3 +1,4 @@
+import { fetchCompleteQuery } from "../lib/supabasePagination.js";
 const ALLOWED_TYPES = new Set(["income", "expense"]);
 const ALLOWED_METHODS = new Set(["cash", "qr", "card", "transfer", "other"]);
 
@@ -95,10 +96,9 @@ async function summarizeSalesIncomeByMethod(supabase, sales = []) {
   const paidSaleIds = new Set();
 
   for (const ids of chunkArray(saleIds)) {
-    const { data: payments, error: paymentsError } = await supabase
+    const { data: payments, error: paymentsError } = await fetchCompleteQuery(() => supabase
       .from("ventas_pagos")
-      .select("venta_id, monto, metodo_pago")
-      .in("venta_id", ids);
+      .select("venta_id, monto, metodo_pago"), "id", { column: "venta_id", values: ids });
 
     if (paymentsError) {
       throw new Error(paymentsError.message || "Failed to fetch sale payments for cash summary");
@@ -146,7 +146,7 @@ async function calculateBalanceCarryFromHistory(supabase, params) {
     movementQuery = movementQuery.eq("sucursal_id", sucursalId);
   }
 
-  const { data: movements, error: movementError } = await movementQuery;
+  const { data: movements, error: movementError } = await fetchCompleteQuery(movementQuery, "id");
   if (movementError) {
     throw new Error(movementError.message || "Failed to calculate bank carry from movements");
   }
@@ -164,7 +164,7 @@ async function calculateBalanceCarryFromHistory(supabase, params) {
     salesQuery = salesQuery.eq("sucursal_id", sucursalId);
   }
 
-  const { data: sales, error: salesError } = await salesQuery;
+  const { data: sales, error: salesError } = await fetchCompleteQuery(salesQuery, "id");
   if (salesError) {
     throw new Error(salesError.message || "Failed to calculate balance carry from sales");
   }
@@ -332,7 +332,7 @@ export async function getCashSummary(supabase, params) {
     movementQuery = movementQuery.eq("sucursal_id", sucursalId);
   }
 
-  const { data: movements, error: movementError } = await movementQuery;
+  const { data: movements, error: movementError } = await fetchCompleteQuery(movementQuery, "id");
   if (movementError) {
     throw new Error(movementError.message || "Failed to fetch movements");
   }
@@ -355,7 +355,7 @@ export async function getCashSummary(supabase, params) {
     salesQuery = salesQuery.eq("sucursal_id", sucursalId);
   }
 
-  const { data: sales, error: salesError } = await salesQuery;
+  const { data: sales, error: salesError } = await fetchCompleteQuery(salesQuery, "id");
   if (salesError) {
     throw new Error(salesError.message || "Failed to fetch sales for cash summary");
   }
@@ -548,8 +548,7 @@ export async function listCashMovements(supabase, params = {}) {
     .select("id, date, type, payment_method, amount, description, user_id, cashbox_id, sucursal_id, created_at")
     .eq("cashbox_id", cashboxId)
     .order("date", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(limit);
+    .order("created_at", { ascending: false });
 
   if (userId) {
     query = query.eq("user_id", userId);
@@ -567,7 +566,9 @@ export async function listCashMovements(supabase, params = {}) {
     query = query.gte("date", startISO).lte("date", endISO);
   }
 
-  const { data, error } = await query;
+  if (!hasStart && !hasEnd) query = query.limit(limit);
+
+  const { data, error } = await (hasStart || hasEnd ? fetchCompleteQuery(query) : query);
   if (error) {
     throw new Error(error.message || "Failed to fetch cash movements");
   }

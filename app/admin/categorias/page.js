@@ -1,4 +1,5 @@
 "use client";
+import { fetchCompleteQuery } from "../../../lib/supabasePagination.js";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -25,7 +26,7 @@ export default function AdminCategorias() {
   async function fetchCategorias() {
     let query = supabase.from("categorias").select("*");
     if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
-    const { data, error } = await query;
+    const { data, error } = await fetchCompleteQuery(query);
     if (error) {
       showToast("Error al cargar categorías", "error");
     } else {
@@ -39,7 +40,7 @@ export default function AdminCategorias() {
       .select("user_id, category_id, categoria, archivado")
       .or("archivado.eq.false,archivado.is.null");
     if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
-    const { data, error } = await query;
+    const { data, error } = await fetchCompleteQuery(query, "user_id");
     if (error) {
       showToast("Error al cargar productos", "error");
     } else {

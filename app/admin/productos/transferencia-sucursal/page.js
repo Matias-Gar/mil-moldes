@@ -1,4 +1,5 @@
 "use client";
+import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/SupabaseClient";
@@ -192,7 +193,7 @@ export default function TransferenciaSucursalPage() {
         .eq("sucursal_id", activeSucursalId)
         .order("color", { ascending: true });
 
-      let { data, error } = await variantsQuery;
+      let { data, error } = await fetchCompleteQuery(variantsQuery, "id");
       if (error) {
         if (isMissingSchemaError(error, ["activo", "stock_decimal"])) {
           let fallbackQuery = supabase
@@ -205,7 +206,7 @@ export default function TransferenciaSucursalPage() {
             fallbackQuery = fallbackQuery.eq("sucursal_id", activeSucursalId);
           }
 
-          const fallback = await fallbackQuery;
+          const fallback = await fetchCompleteQuery(fallbackQuery, "id");
           data = (fallback.data || []).map((row) => ({
             ...row,
             activo: true,

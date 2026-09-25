@@ -1,4 +1,6 @@
 "use client";
+import { fetchCompleteQuery } from "@/lib/supabasePagination";
+
 import { useEffect, useState } from "react";
 import { supabase } from "../../../../lib/SupabaseClient";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../../components/ui/card";
@@ -19,19 +21,21 @@ export default function ProximoACompraPage() {
         .from("productos")
         .select("user_id, nombre, descripcion, precio, stock, categoria");
       if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
-      const { data, error } = await query;
+      const { data, error } = await fetchCompleteQuery(query, "user_id");
       if (!error && data) {
         const bajos = data.filter(p => Number(p.stock) < 3);
         setProductos(bajos);
         // Obtener imágenes
         const ids = bajos.map(p => p.user_id);
         if (ids.length > 0) {
-          let imgsQuery = supabase
-            .from("producto_imagenes")
-            .select("producto_id, imagen_url")
-            .in("producto_id", ids);
-          if (activeSucursalId) imgsQuery = imgsQuery.eq("sucursal_id", activeSucursalId);
-          const { data: imgs } = await imgsQuery;
+
+          const { data: imgs } = await fetchCompleteQuery(() => {
+            let scopedQuery = supabase
+              .from("producto_imagenes")
+              .select("producto_id, imagen_url");
+            if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+            return scopedQuery;
+          }, "id", { column: "producto_id", values: ids });
           if (imgs) {
             const agrupadas = {};
             imgs.forEach(img => {

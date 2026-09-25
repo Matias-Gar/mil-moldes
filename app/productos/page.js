@@ -1,4 +1,5 @@
 "use client";
+import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
 // --- IMPORTS Y HOOKS NECESARIOS ---
 import React, { useState, useEffect } from "react";
@@ -288,21 +289,22 @@ export default function CatalogoPage() {
         const ids = items.map((item) => item.user_id).filter(Boolean);
         if (ids.length === 0) return items;
         try {
-            let productDetailsQuery = supabase
-                .from('productos')
-                .select('user_id, unidad_base, unidades_alternativas, factor_conversion, vista_producto, stock')
-                .in('user_id', ids);
-            let variantsQuery = supabase
-                .from('producto_variantes')
-                .select('producto_id, id, color, stock, stock_decimal, precio, imagen_url, sku')
-                .in('producto_id', ids);
-            if (activeSucursalId) {
-                productDetailsQuery = productDetailsQuery.eq('sucursal_id', activeSucursalId);
-                variantsQuery = variantsQuery.eq('sucursal_id', activeSucursalId);
-            }
+
             const [{ data, error }, { data: variantRows }] = await Promise.all([
-                productDetailsQuery,
-                variantsQuery,
+                fetchCompleteQuery(() => {
+                  let scopedQuery = supabase
+                    .from('productos')
+                    .select('user_id, unidad_base, unidades_alternativas, factor_conversion, vista_producto, stock');
+                  if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+                  return scopedQuery;
+                }, "user_id", { column: "user_id", values: ids }),
+                fetchCompleteQuery(() => {
+                  let scopedQuery = supabase
+                    .from('producto_variantes')
+                    .select('producto_id, id, color, stock, stock_decimal, precio, imagen_url, sku');
+                  if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+                  return scopedQuery;
+                }, "id", { column: "producto_id", values: ids }),
             ]);
             if (error || !Array.isArray(data)) return items;
             const byId = new Map(data.map((row) => [String(row.user_id), row]));
@@ -406,7 +408,7 @@ export default function CatalogoPage() {
             .from('categorias')
             .select('*');
         if (activeSucursalId) categoriasQuery = categoriasQuery.eq('sucursal_id', activeSucursalId);
-        const { data: categoriasData, error: categoriasError } = await categoriasQuery;
+        const { data: categoriasData, error: categoriasError } = await fetchCompleteQuery(categoriasQuery, "id");
         if (!categoriasError && categoriasData) {
             setCategorias(categoriasData);
         }
@@ -416,7 +418,7 @@ export default function CatalogoPage() {
             .from('producto_imagenes')
             .select('producto_id, imagen_url');
         if (activeSucursalId) imagenesQuery = imagenesQuery.eq('sucursal_id', activeSucursalId);
-        const { data: imagenesData, error: imagenesError } = await imagenesQuery;
+        const { data: imagenesData, error: imagenesError } = await fetchCompleteQuery(imagenesQuery, "id");
         if (imagenesError || !imagenesData) {
             setImagenesProductos({});
             return;

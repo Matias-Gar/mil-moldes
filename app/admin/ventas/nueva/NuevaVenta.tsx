@@ -1,4 +1,6 @@
 "use client";
+import { fetchCompleteQuery } from "../../../../lib/supabasePagination.js";
+
 import React, { useEffect, useRef, useCallback } from 'react';
 import { useCarrito } from '../../../../hooks/useCarrito';
 import { useCliente } from '../../../../hooks/useCliente';
@@ -293,30 +295,35 @@ export default function NuevaVenta() {
         let unidadesByProducto: Record<string, any> = {};
         if (productosIds.length > 0) {
           const supabaseClient = supabase;
-          let productosQuery = supabaseClient
-            .from('v_productos_catalogo')
-            .select('*')
-            .in('producto_id', productosIds);
-          if (activeSucursalId) productosQuery = productosQuery.eq('sucursal_id', activeSucursalId);
-          const { data: productosData, error: productosError } = await productosQuery;
+
+          const { data: productosData, error: productosError } = await fetchCompleteQuery(() => {
+            let scopedQuery = supabaseClient
+              .from('v_productos_catalogo')
+              .select('*');
+            if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+            return scopedQuery;
+          }, "producto_id", { column: "producto_id", values: productosIds });
           if (productosError) throw productosError;
           productosDB = Array.isArray(productosData) ? productosData : [];
 
-          let unidadesQuery = supabaseClient
-            .from('productos')
-            .select('user_id, stock, unidad_base, unidades_alternativas, factor_conversion')
-            .in('user_id', productosIds);
-          if (activeSucursalId) unidadesQuery = unidadesQuery.eq('sucursal_id', activeSucursalId);
-          const { data: unidadesData } = await unidadesQuery;
+          const { data: unidadesData } = await fetchCompleteQuery(() => {
+            let scopedQuery = supabaseClient
+              .from('productos')
+              .select('user_id, stock, unidad_base, unidades_alternativas, factor_conversion');
+            if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+            return scopedQuery;
+          }, "user_id", { column: "user_id", values: productosIds });
           unidadesByProducto = Object.fromEntries((Array.isArray(unidadesData) ? unidadesData : []).map((row) => [String(row.user_id), row]));
 
           // Traer imágenes asociadas
-          let imgsQuery = supabaseClient
-            .from('producto_imagenes')
-            .select('producto_id, imagen_url')
-            .in('producto_id', productosIds);
-          if (activeSucursalId) imgsQuery = imgsQuery.eq('sucursal_id', activeSucursalId);
-          const { data: imgs } = await imgsQuery;
+
+          const { data: imgs } = await fetchCompleteQuery(() => {
+            let scopedQuery = supabaseClient
+              .from('producto_imagenes')
+              .select('producto_id, imagen_url');
+            if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+            return scopedQuery;
+          }, "id", { column: "producto_id", values: productosIds });
           if (Array.isArray(imgs)) {
             imgs.forEach(i => {
               if (!imagenesDB[i.producto_id]) imagenesDB[i.producto_id] = [];
@@ -328,12 +335,14 @@ export default function NuevaVenta() {
         // Consultar packs desde la base de datos
         let packsDB = [];
         if (packsIds.length > 0) {
-          let packsQuery = supabase
-            .from('packs')
-            .select(`*, pack_productos ( cantidad, producto_id, variante_id, productos!pack_productos_producto_id_fkey ( user_id, nombre, precio, categoria, stock, producto_variantes ( id, color, precio, stock, stock_decimal, sku ) ) )`)
-            .in('id', packsIds);
-          if (activeSucursalId) packsQuery = packsQuery.eq('sucursal_id', activeSucursalId);
-          const { data: packsData, error: packsError } = await packsQuery;
+
+          const { data: packsData, error: packsError } = await fetchCompleteQuery(() => {
+            let scopedQuery = supabase
+              .from('packs')
+              .select(`*, pack_productos ( cantidad, producto_id, variante_id, productos!pack_productos_producto_id_fkey ( user_id, nombre, precio, categoria, stock, producto_variantes ( id, color, precio, stock, stock_decimal, sku ) ) )`);
+            if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+            return scopedQuery;
+          }, "id", { column: "id", values: packsIds });
           if (packsError) throw packsError;
           packsDB = Array.isArray(packsData) ? packsData : [];
         }
@@ -829,12 +838,14 @@ export default function NuevaVenta() {
       // 2. Consultar productos y variantes desde la base de datos
       let productosDB: ProductoDB[] = [];
       if (productosIds.length > 0) {
-        let productosQuery = supabase
+
+        const { data: productosData, error: productosError } = await fetchCompleteQuery(() => {
+          let scopedQuery = supabase
           .from('productos')
-          .select('user_id, nombre, precio, precio_compra, stock, categoria, codigo_barra, unidad_base, unidades_alternativas, factor_conversion, producto_variantes ( id, color, precio, stock, stock_decimal, sku )')
-          .in('user_id', productosIds);
-        if (activeSucursalId) productosQuery = productosQuery.eq('sucursal_id', activeSucursalId);
-        const { data: productosData, error: productosError } = await productosQuery;
+          .select('user_id, nombre, precio, precio_compra, stock, categoria, codigo_barra, unidad_base, unidades_alternativas, factor_conversion, producto_variantes ( id, color, precio, stock, stock_decimal, sku )');
+          if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+          return scopedQuery;
+        }, "user_id", { column: "user_id", values: productosIds });
         if (productosError) throw productosError;
         productosDB = Array.isArray(productosData) ? productosData : [];
       }
@@ -842,12 +853,14 @@ export default function NuevaVenta() {
       // 3. Consultar packs y sus productos desde la base de datos
       let packsDB: PackDB[] = [];
       if (packsIds.length > 0) {
-        let packsQuery = supabase
+
+        const { data: packsData, error: packsError } = await fetchCompleteQuery(() => {
+          let scopedQuery = supabase
           .from('packs')
-          .select('*, pack_productos ( cantidad, producto_id, variante_id, productos!pack_productos_producto_id_fkey ( user_id, nombre, precio, precio_compra, categoria, stock, unidad_base, unidades_alternativas, factor_conversion, producto_variantes ( id, color, precio, stock, stock_decimal, sku ) ) )')
-          .in('id', packsIds);
-        if (activeSucursalId) packsQuery = packsQuery.eq('sucursal_id', activeSucursalId);
-        const { data: packsData, error: packsError } = await packsQuery;
+          .select('*, pack_productos ( cantidad, producto_id, variante_id, productos!pack_productos_producto_id_fkey ( user_id, nombre, precio, precio_compra, categoria, stock, unidad_base, unidades_alternativas, factor_conversion, producto_variantes ( id, color, precio, stock, stock_decimal, sku ) ) )');
+          if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+          return scopedQuery;
+        }, "id", { column: "id", values: packsIds });
         if (packsError) throw packsError;
         packsDB = Array.isArray(packsData) ? packsData : [];
       }

@@ -1,4 +1,5 @@
 "use client";
+import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
 import dynamic from 'next/dynamic';
 import { useEffect, useState, useRef } from 'react';
@@ -19,7 +20,6 @@ import * as ventasService from '../../../services/ventas.service';
 // Si la tabla usa react-barcode, este dynamic es necesario. Si solo usa la función handlePrintBarcode, se podría quitar.
 // Lo mantendremos por si acaso el componente de tabla lo usa internamente.
 const Barcode = dynamic(() => import('react-barcode'), { ssr: false });
-const SUPABASE_PAGE_SIZE = 1000;
 
 function parseDecimalInput(value, fallback = 0) {
     if (value === undefined || value === null || value === "") return fallback;
@@ -432,7 +432,7 @@ export default function AdminProductosPage() {
             .select('id, categori')
             .order('categori', { ascending: true });
         if (activeSucursalId) query = query.eq('sucursal_id', activeSucursalId);
-        const { data, error } = await query;
+        const { data, error } = await fetchCompleteQuery(query);
         if (error) {
             setCategories([]);
             setMessage('❌ Error al cargar categorías.');
@@ -482,7 +482,7 @@ export default function AdminProductosPage() {
             .eq('archivado', false)
             .order('nombre', { ascending: true });
         if (activeSucursalId) query = query.eq('sucursal_id', activeSucursalId);
-        let response = await query;
+        let response = await fetchCompleteQuery(query, "user_id");
 
         data = response.data;
         error = response.error;
@@ -495,7 +495,7 @@ export default function AdminProductosPage() {
                 .eq('archivado', false)
                 .order('nombre', { ascending: true });
             if (activeSucursalId) fallbackQuery = fallbackQuery.eq('sucursal_id', activeSucursalId);
-            response = await fallbackQuery;
+            response = await fetchCompleteQuery(fallbackQuery, "user_id");
             data = response.data;
             error = response.error;
         }
@@ -519,27 +519,12 @@ export default function AdminProductosPage() {
         // 2. Traer imágenes de todos los productos
         const ids = formattedData.map(p => p.user_id);
         if (ids.length > 0) {
-            let imgs = [];
-            let imgsError = null;
-            let from = 0;
-            while (true) {
-                let imgsQuery = supabase
-                    .from('producto_imagenes')
-                    .select('producto_id, imagen_url')
-                    .in('producto_id', ids);
-                if (activeSucursalId) imgsQuery = imgsQuery.eq('sucursal_id', activeSucursalId);
-                imgsQuery = imgsQuery
-                    .order('id', { ascending: true })
-                    .range(from, from + SUPABASE_PAGE_SIZE - 1);
-                const { data, error } = await imgsQuery;
-                if (error) {
-                    imgsError = error;
-                    break;
-                }
-                imgs = [...imgs, ...(data || [])];
-                if (!data || data.length < SUPABASE_PAGE_SIZE) break;
-                from += SUPABASE_PAGE_SIZE;
-            }
+
+            const { data: imgs, error: imgsError } = await fetchCompleteQuery(() => {
+              let scopedQuery = supabase.from('producto_imagenes').select('producto_id, imagen_url');
+              if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+              return scopedQuery;
+            }, 'id', { column: 'producto_id', values: ids });
             if (!imgsError && imgs) {
                 // Agrupar por producto_id
                 const agrupadas = {};

@@ -1,4 +1,5 @@
 "use client";
+import { fetchCompleteQuery } from "../../../../lib/supabasePagination.js";
 
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
@@ -342,9 +343,9 @@ export default function EditarCatalogo() {
 
       // 2. Sincronizar variantes
       // Obtener variantes actuales en BD
-      const { data: variantesBD } = await supabase
+      const { data: variantesBD } = await fetchCompleteQuery(supabase
         .from("producto_variantes")
-        .select("id, producto_id, color, talla, stock, stock_decimal, sku, precio, imagen_url, activo").eq("producto_id", productoActual.user_id);
+        .select("id, producto_id, color, talla, stock, stock_decimal, sku, precio, imagen_url, activo").eq("producto_id", productoActual.user_id), "id");
       // Eliminar variantes quitadas
       for (const vBD of variantesBD || []) {
         if (!nuevasVariantes.some(v => v.id === vBD.id)) {
@@ -389,7 +390,7 @@ export default function EditarCatalogo() {
         .from("producto_imagenes")
         .select("id, producto_id, imagen_url").eq("producto_id", productoActual.user_id);
       if (activeSucursalId) imagenesBDQuery = imagenesBDQuery.eq("sucursal_id", activeSucursalId);
-      const { data: imagenesBD } = await imagenesBDQuery;
+      const { data: imagenesBD } = await fetchCompleteQuery(imagenesBDQuery);
       // Eliminar imágenes quitadas
       for (const imgBD of imagenesBD || []) {
         if (!nuevasImagenes.some(img => img.id === imgBD.id || img.imagen_url === imgBD.imagen_url)) {

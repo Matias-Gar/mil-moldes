@@ -1,4 +1,5 @@
 "use client";
+import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../../../lib/SupabaseClient";
@@ -158,7 +159,7 @@ export default function StockPage() {
         .in("producto_id", idBatch)
         .eq("activo", true);
       if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
-      let result = await query;
+      let result = await fetchCompleteQuery(query);
 
       if (result.error) {
         let fallbackQuery = supabase
@@ -166,7 +167,7 @@ export default function StockPage() {
           .select("producto_id, color, stock, stock_decimal, activo")
           .in("producto_id", idBatch);
         if (activeSucursalId) fallbackQuery = fallbackQuery.eq("sucursal_id", activeSucursalId);
-        result = await fallbackQuery;
+        result = await fetchCompleteQuery(fallbackQuery, "id");
       }
       if (result.error) {
         console.error("Error al obtener variantes de productos:", result.error);
@@ -371,7 +372,7 @@ export default function StockPage() {
       .select("categori")
       .order("categori", { ascending: true });
     if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
-    const { data, error } = await query;
+    const { data, error } = await fetchCompleteQuery(query);
 
     if (error) {
       console.error("Error al obtener categorías:", error);
@@ -455,7 +456,7 @@ export default function StockPage() {
       categorias (categori)
     `);
     if (activeSucursalId) enrichedQuery = enrichedQuery.eq("sucursal_id", activeSucursalId);
-    const enrichedResult = await enrichedQuery.order(orderField, { ascending });
+    const enrichedResult = await fetchCompleteQuery(enrichedQuery.order(orderField, { ascending }), "user_id");
 
     if (!enrichedResult.error) {
       return await enrichProductosWithVariantStock(enrichedResult.data || []);
@@ -475,7 +476,7 @@ export default function StockPage() {
       categorias (categori)
     `);
     if (activeSucursalId) fallbackQuery = fallbackQuery.eq("sucursal_id", activeSucursalId);
-    const fallbackResult = await fallbackQuery.order(orderField, { ascending });
+    const fallbackResult = await fetchCompleteQuery(fallbackQuery.order(orderField, { ascending }), "user_id");
 
     if (fallbackResult.error) {
       throw fallbackResult.error;
@@ -488,12 +489,13 @@ export default function StockPage() {
     const ids = (items || []).map((p) => p?.user_id ?? p?.id).filter(Boolean);
     if (ids.length === 0) return items || [];
 
-    let query = supabase
-      .from("producto_variantes")
-      .select("producto_id, stock, stock_decimal")
-      .in("producto_id", ids);
-    if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
-    const { data } = await query;
+    const { data } = await fetchCompleteQuery(() => {
+      let scopedQuery = supabase
+        .from("producto_variantes")
+        .select("producto_id, stock, stock_decimal");
+      if (activeSucursalId) scopedQuery = scopedQuery.eq("sucursal_id", activeSucursalId);
+      return scopedQuery;
+    }, "id", { column: "producto_id", values: ids });
 
     if (!Array.isArray(data) || data.length === 0) return items || [];
 

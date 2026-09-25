@@ -1,4 +1,5 @@
 "use client";
+import { fetchCompleteQuery } from "../../../../lib/supabasePagination.js";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../../../lib/SupabaseClient";
@@ -56,7 +57,7 @@ export default function ArchivarProductosPage() {
       const { data: imgs } = await fetchRowsInChunks(ids, (chunk) => {
         let imgsQuery = supabase.from("producto_imagenes").select("producto_id, imagen_url").in("producto_id", chunk);
         if (activeSucursalId) imgsQuery = imgsQuery.eq("sucursal_id", activeSucursalId);
-        return imgsQuery;
+        return fetchCompleteQuery(imgsQuery);
       });
       const agrupadas = {};
       (Array.isArray(imgs) ? imgs : []).forEach((img) => {
