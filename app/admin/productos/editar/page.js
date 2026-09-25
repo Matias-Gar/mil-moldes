@@ -11,9 +11,9 @@ import { validarProducto } from "@/lib/utils";
 import { getProductViewMeta, normalizeProductView } from "@/lib/productViews";
 import { useSucursalActiva } from "@/components/admin/SucursalContext";
 import { optimizeImageForUpload } from "@/lib/imageUploadOptimization";
+import { loadEditProductCatalog } from "@/lib/editProductCatalog";
 
 const BUCKET_NAME = "product_images";
-const SUPABASE_PAGE_SIZE = 1000;
 
 const isFileImage = (value) =>
   typeof File !== "undefined" && value instanceof File;
@@ -67,60 +67,28 @@ export default function EditarCatalogo() {
     const currentViewMeta = getProductViewMeta(currentProductView);
     // --- Lógica de edición de productos ---
 
+  const [productos, setProductos] = useState([]);
+  const [imagenes, setImagenes] = useState({});
+  const [variantes, setVariantes] = useState({});
+  const [categories, setCategories] = useState([]);
+  const [editando, setEditando] = useState({});
+  const [modalConfirm, setModalConfirm] = useState({ visible: false, id: null });
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [sortOrder, setSortOrder] = useState("alphabetical");
+
+  const getProductKey = (product) => product?.id ?? product?.user_id ?? null;
+
     // Cargar productos, variantes, imágenes y categorías al montar
     useEffect(() => {
+      let cancelled = false;
       const fetchData = async () => {
         setLoading(true);
         try {
-          // Productos
-          let productosQuery = supabase
-            .from("productos")
-            .select("*")
-            .order("nombre", { ascending: true });
-          if (activeSucursalId) productosQuery = productosQuery.eq("sucursal_id", activeSucursalId);
-          const { data: productosData, error: productosError } = await productosQuery;
-          if (productosError) throw productosError;
-
-          const productIds = (productosData || [])
-            .map((p) => p.user_id)
-            .filter((id) => id !== undefined && id !== null);
-
-          // Imágenes
-          let imagenesData = [];
-          if (productIds.length > 0) {
-            let from = 0;
-            while (true) {
-              let imagenesQuery = supabase
-                .from("producto_imagenes")
-                .select("id, producto_id, imagen_url, sucursal_id")
-                .in("producto_id", productIds);
-              if (activeSucursalId) imagenesQuery = imagenesQuery.eq("sucursal_id", activeSucursalId);
-              imagenesQuery = imagenesQuery
-                .order("id", { ascending: true })
-                .range(from, from + SUPABASE_PAGE_SIZE - 1);
-              const { data, error: imagenesError } = await imagenesQuery;
-              if (imagenesError) throw imagenesError;
-              imagenesData = [...imagenesData, ...(data || [])];
-              if (!data || data.length < SUPABASE_PAGE_SIZE) break;
-              from += SUPABASE_PAGE_SIZE;
-            }
-          }
-
-          // Variantes
-          let variantesQuery = supabase
-            .from("producto_variantes")
-            .select("*");
-          if (activeSucursalId) variantesQuery = variantesQuery.eq("sucursal_id", activeSucursalId);
-          const { data: variantesData, error: variantesError } = await variantesQuery;
-          if (variantesError) throw variantesError;
-
-          // Categorías
-          let categoriesQuery = supabase
-            .from("categorias")
-            .select("id, categori");
-          if (activeSucursalId) categoriesQuery = categoriesQuery.eq("sucursal_id", activeSucursalId);
-          const { data: categoriesData, error: categoriesError } = await categoriesQuery;
-          if (categoriesError) throw categoriesError;
+          const { productosData, imagenesData, variantesData, categoriesData } =
+            await loadEditProductCatalog(supabase, activeSucursalId);
+          if (cancelled) return;
 
           // Asociar imágenes y variantes a cada producto
           const imgs = {};
@@ -149,11 +117,13 @@ export default function EditarCatalogo() {
           setVariantes(vars);
           setCategories(categoriesData || []);
         } catch (err) {
+          if (cancelled) return;
           showToast("Error cargando productos: " + (err?.message || err), "error");
         }
         setLoading(false);
       };
       fetchData();
+      return () => { cancelled = true; };
     }, [activeSucursalId]);
     // Manejo de cambios en campos del producto
     const setEditDataField = (productKey, field, value) => {
@@ -282,19 +252,6 @@ export default function EditarCatalogo() {
     const closeConfirm = () => {
       setModalConfirm({ visible: false, id: null });
     };
-  const [productos, setProductos] = useState([]);
-  const [imagenes, setImagenes] = useState({});
-  const [variantes, setVariantes] = useState({});
-  const [categories, setCategories] = useState([]);
-  const [editando, setEditando] = useState({});
-  const [modalConfirm, setModalConfirm] = useState({ visible: false, id: null });
-  const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("");
-  const [sortOrder, setSortOrder] = useState("alphabetical");
-
-  const getProductKey = (product) => product?.id ?? product?.user_id ?? null;
-
   const clearFilters = () => {
     setSearch("");
     setCategoryFilter("");
