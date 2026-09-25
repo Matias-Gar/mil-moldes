@@ -4,6 +4,8 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../../../lib/SupabaseClient";
 import { useSucursalActiva } from "../../../../components/admin/SucursalContext";
 
+import { loadStockAuditData, loadStockAuditHistory } from "../../../../lib/stockAuditData";
+
 function cleanNumber(value, decimals = 2) {
   const numeric = Number(value || 0);
   if (!Number.isFinite(numeric)) return "0";
@@ -117,6 +119,9 @@ export default function AuditoriaStockPage() {
   const [selected, setSelected] = useState(null);
   const [sugerencias, setSugerencias] = useState([]);
   const inputRef = useRef(null);
+  const [loadError, setLoadError] = useState("");
+  const [historyError, setHistoryError] = useState("");
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const auditarProducto = (producto) => {
     const vars = variantes
@@ -330,52 +335,52 @@ export default function AuditoriaStockPage() {
   };
 
   useEffect(() => {
+    let cancelled = false;
     async function fetchData() {
       setLoading(true);
-      const scopeSucursal = (query) => activeSucursalId ? query.eq("sucursal_id", activeSucursalId) : query;
-      const transfersQuery = activeSucursalId
-        ? supabase.from("transferencias_sucursal").select("*").or(`sucursal_origen_id.eq.${activeSucursalId},sucursal_destino_id.eq.${activeSucursalId}`)
-        : supabase.from("transferencias_sucursal").select("*");
-      const [prodsRes, detsRes, varsRes, movsRes, transfersRes, reconciliationRes] = await Promise.all([
-        scopeSucursal(supabase.from("productos").select("user_id, nombre, stock, stock_inicial, unidad_base, unidades_alternativas, factor_conversion")),
-        scopeSucursal(supabase.from("ventas_detalle").select("producto_id, cantidad, cantidad_base, unidad, variante_id, created_at, usuario_email")),
-        scopeSucursal(supabase.from("producto_variantes").select("*")),
-        scopeSucursal(supabase.from("stock_movimientos").select("*")),
-        transfersQuery,
-        supabase.from("inventory_reconciliation").select("producto_id,variante_id,stock_reconstruido,diferencia,estado"),
-      ]);
-
-      setProductos(prodsRes.data || []);
-      setDetalles(detsRes.data || []);
-      setVariantes(varsRes.data || []);
-      setMovimientos(movsRes.data || []);
-      setTransferenciasSucursal(transfersRes.data || []);
-      setReconciliacion(reconciliationRes.data || []);
-      setLoading(false);
+      setLoadError("");
+      setSelected(null);
+      setSugerencias([]);
+      try {
+        const data = await loadStockAuditData(supabase, activeSucursalId);
+        if (cancelled) return;
+        setProductos(data.productos);
+        setDetalles(data.detalles);
+        setVariantes(data.variantes);
+        setMovimientos(data.movimientos);
+        setTransferenciasSucursal(data.transferencias);
+        setReconciliacion(data.reconciliacion);
+      } catch (error) {
+        if (!cancelled) setLoadError(error.message || String(error));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
-
     fetchData();
+    return () => { cancelled = true; };
   }, [activeSucursalId]);
 
+  const selectedProductId = selected?.user_id;
   useEffect(() => {
-    if (!selected) {
-      setHistorial([]);
-      return;
-    }
-
+    let cancelled = false;
     async function fetchHistorial() {
-      let query = supabase
-        .from("productos_historial")
-        .select("id, accion, datos_anteriores, datos_nuevos, usuario_email, fecha, producto_id")
-        .eq("producto_id", selected.user_id)
-        .order("fecha", { ascending: false });
-      if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
-      const { data } = await query;
-      setHistorial(data || []);
+      if (cancelled) return;
+      setHistorial([]);
+      setHistoryError("");
+      setHistoryLoading(selectedProductId != null);
+      if (selectedProductId == null) return;
+      try {
+        const data = await loadStockAuditHistory(supabase, activeSucursalId, selectedProductId);
+        if (!cancelled) setHistorial(data);
+      } catch (error) {
+        if (!cancelled) setHistoryError(error.message || String(error));
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
     }
-
-    fetchHistorial();
-  }, [selected?.user_id, activeSucursalId]);
+    queueMicrotask(fetchHistorial);
+    return () => { cancelled = true; };
+  }, [selectedProductId, activeSucursalId]);
 
   const auditoria = useMemo(() => {
     const query = busqueda.trim().toLowerCase();
@@ -476,11 +481,13 @@ export default function AuditoriaStockPage() {
         )}
 
         <div className="mt-6">
-          <h3 className="font-black">Movimientos y ventas recientes</h3>
+          <h3 className="font-black">Movimientos y ventas</h3>
+          {historyLoading && <p className="text-sm text-slate-500">Cargando historial...</p>}
+          {historyError && <p role="alert" className="text-sm text-red-700">No se pudo cargar el historial completo: {historyError}</p>}
           <div className="mt-3 max-h-[420px] space-y-2 overflow-auto pr-1">
-            {getEventos(product.user_id, product).length === 0 ? (
+            {getEventos(product.user_id, product).length === 0 && !historyLoading && !historyError ? (
               <p className="text-sm text-slate-500">No hay eventos registrados para este producto.</p>
-            ) : getEventos(product.user_id, product).slice(0, 80).map((event, index) => (
+            ) : getEventos(product.user_id, product).map((event, index) => (
               <div key={`${event.tipo}-${event.fecha}-${index}`} className="rounded border border-slate-200 bg-white p-3 text-sm">
                 <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
                   <p className="font-black capitalize">{String(event.tipo || "evento").replaceAll("_", " ")}</p>
@@ -576,7 +583,9 @@ export default function AuditoriaStockPage() {
           </div>
         </section>
 
-        {loading ? (
+        {loadError ? (
+          <div role="alert" className="rounded-lg bg-red-50 p-5 text-red-800">No se pudo cargar la auditor?a completa. Recarga la p?gina para reintentar. {loadError}</div>
+        ) : loading ? (
           <div className="rounded-lg bg-white p-8 text-center text-slate-500 shadow">Cargando auditoria...</div>
         ) : (
           <>
