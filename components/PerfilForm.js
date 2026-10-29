@@ -1,6 +1,7 @@
 "use client";
+import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
 import { useState, useEffect } from 'react';
-import Image from 'next/image';
+import Image from "@/components/StorageImage";
 import { supabase } from "../lib/SupabaseClient";
 
 export default function PerfilForm({ userId, perfilActual, onSave, isAdminEdit = false }) {
@@ -108,7 +109,7 @@ export default function PerfilForm({ userId, perfilActual, onSave, isAdminEdit =
         .from('perfiles')
         .getPublicUrl(fileName);
 
-      setFotoPerfil(publicUrl);
+      setFotoPerfil(resolveStorageImageUrl(publicUrl));
       setMessage("✅ Foto subida correctamente");
       setTimeout(() => setMessage(""), 3000);
     } catch (error) {

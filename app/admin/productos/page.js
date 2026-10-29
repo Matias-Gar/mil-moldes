@@ -1,4 +1,7 @@
 "use client";
+import { availableProductsFirst } from "@/lib/productAvailability.js";
+import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
+import StorageImage from "@/components/StorageImage";
 import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
 import dynamic from 'next/dynamic';
@@ -136,7 +139,7 @@ const uploadProductImages = async (files) => {
         const { data: publicUrlData } = supabase.storage
             .from(BUCKET_NAME)
             .getPublicUrl(filePath);
-        urls.push(publicUrlData.publicUrl);
+        urls.push(resolveStorageImageUrl(publicUrlData.publicUrl));
     }
     return urls;
 };
@@ -911,7 +914,7 @@ export default function AdminProductosPage() {
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200 text-gray-900">
-                            {productos.map((producto) => {
+                            {availableProductsFirst(productos, (p) => Number(p.stock || 0) <= 0).map((producto) => {
                                 const safe = (val) => (typeof val === 'string' || typeof val === 'number') ? val : JSON.stringify(val ?? '');
                                 // Unificar lógica: usar imagenesProductos, luego imagen_url, luego placeholder
                                 const imagenes = (imagenesProductos[producto.user_id]?.length > 0)
@@ -1045,7 +1048,7 @@ export default function AdminProductosPage() {
                                 <div className="flex flex-wrap gap-2">
                                     {editImageList.map((url) => (
                                         <div key={url} className="relative group">
-                                            <Image
+                                            <StorageImage
                                                 src={getOptimizedImageUrl(url, 300, { quality: 95, format: 'origin' })}
                                                 srcSet={buildImageSrcSet(url, [150, 300, 600], { quality: 95, format: 'origin' })}
                                                 sizes="64px"

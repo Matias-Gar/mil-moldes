@@ -1,59 +1,34 @@
+import { resolveStorageImageUrl } from './storageUrls.js'
+
 type ImageFormat = 'origin' | 'webp' | 'avif' | 'jpg' | 'png'
+type OptimizeOptions = { quality?: number; format?: ImageFormat }
 
-type OptimizeOptions = {
-  quality?: number
-  format?: ImageFormat
-}
-
-const SUPABASE_STORAGE_HOST_FRAGMENT = '.supabase.co'
-const SUPABASE_STORAGE_PATH_FRAGMENT = '/storage/v1/object/'
+export { resolveStorageImageUrl }
 
 export function isSupabaseStorageUrl(url: string): boolean {
   try {
-    const parsed = new URL(url)
-    return (
-      parsed.hostname.includes(SUPABASE_STORAGE_HOST_FRAGMENT) &&
-      parsed.pathname.includes(SUPABASE_STORAGE_PATH_FRAGMENT)
-    )
+    return new URL(resolveStorageImageUrl(url)).pathname.includes('/storage/v1/object/public/')
   } catch {
     return false
   }
 }
 
+// Width/quality remain part of the public interface. Next Image performs
+// optimization; self-hosted Storage is only required to serve originals.
 export function getOptimizedImageUrl(
   url?: string,
-  width = 800,
-  options: OptimizeOptions = {}
+  _width = 800,
+  _options: OptimizeOptions = {}
 ): string {
-  if (!url) return ""
-
-  if (!isSupabaseStorageUrl(url)) {
-    return url
-  }
-
-  try {
-    const parsed = new URL(url)
-    const quality = options.quality ?? 95
-    const format = options.format ?? 'origin'
-
-    parsed.searchParams.set('width', String(width))
-    parsed.searchParams.set('quality', String(quality))
-    parsed.searchParams.set('format', format)
-
-    return parsed.toString()
-  } catch {
-    return url
-  }
+  return resolveStorageImageUrl(url)
 }
 
 export function buildImageSrcSet(
-  url?: string,
-  widths: number[] = [400, 800, 1200],
-  options: OptimizeOptions = {}
+  _url?: string,
+  _widths: number[] = [400, 800, 1200],
+  _options: OptimizeOptions = {}
 ): string {
-  if (!url) return ""
-
-  return widths
-    .map((w) => `${getOptimizedImageUrl(url, w, options)} ${w}w`)
-    .join(', ')
+  // Plain <img> consumers receive an original; identical files must not be
+  // advertised as resized variants with misleading width descriptors.
+  return ''
 }

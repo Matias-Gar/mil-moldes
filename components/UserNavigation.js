@@ -1,4 +1,6 @@
 'use client';
+import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
+
 
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/SupabaseClient';
@@ -141,7 +143,7 @@ export default function UserNavigation() {
                 <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center">
                   {profile?.avatar_url ? (
                     <img
-                      src={profile.avatar_url}
+                      src={resolveStorageImageUrl(profile.avatar_url)}
                       alt="Avatar"
                       className="w-8 h-8 rounded-full object-cover"
                       onError={(e) => {

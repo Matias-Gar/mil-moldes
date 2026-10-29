@@ -1,22 +1,22 @@
 import type { NextConfig } from "next";
+import { getStorageBaseUrl } from "./lib/storageUrls.js";
 
-const supabaseHostname = process.env.NEXT_PUBLIC_SUPABASE_URL
-  ? new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).hostname
-  : "";
+const supabaseStorageUrl = new URL(getStorageBaseUrl());
 
 const nextConfig: NextConfig = {
   turbopack: {
     root: process.cwd(),
   },
   images: {
+    qualities: [75, 94, 95, 96, 99],
     remotePatterns: [
-      ...(supabaseHostname
+      ...(supabaseStorageUrl
         ? [
             {
-              protocol: 'https' as const,
-              hostname: supabaseHostname,
-              port: '',
-              pathname: '/storage/v1/object/public/**',
+              protocol: supabaseStorageUrl.protocol.replace(':', '') as 'http' | 'https',
+              hostname: supabaseStorageUrl.hostname,
+              port: supabaseStorageUrl.port,
+              pathname: `${supabaseStorageUrl.pathname.replace(/\/$/, '')}/storage/v1/object/public/**`,
             },
           ]
         : []),

@@ -5,6 +5,7 @@ import { supabase } from '../lib/SupabaseClient';
 interface Producto {
   user_id: string;
   nombre: string;
+  imagen_url?: string;
   precio: number;
   precio_base?: number;
   precio_compra?: number;
@@ -115,6 +116,7 @@ async function enriquecerUnidades(productos: Producto[], sucursalId?: string) {
 
   const productRows: Array<{
     user_id: string | number;
+    imagen_url?: string;
     unidad_base?: string;
     unidades_alternativas?: string[];
     factor_conversion?: number;
@@ -134,7 +136,7 @@ async function enriquecerUnidades(productos: Producto[], sucursalId?: string) {
   for (const chunk of chunkArray(ids)) {
     let productosQuery = supabase
         .from('productos')
-        .select('user_id, unidad_base, unidades_alternativas, factor_conversion, stock')
+        .select('user_id, imagen_url, unidad_base, unidades_alternativas, factor_conversion, stock')
         .in('user_id', chunk);
     let variantesQuery = supabase
         .from('producto_variantes')
@@ -154,6 +156,7 @@ async function enriquecerUnidades(productos: Producto[], sucursalId?: string) {
     productRows.map((row) => [
       String(row.user_id),
       {
+        imagen_url: row.imagen_url,
         unidad_base: String(row.unidad_base || '').trim() || 'unidad',
         unidades_alternativas: Array.isArray(row.unidades_alternativas) ? row.unidades_alternativas : [],
         factor_conversion: Number(row.factor_conversion || 0) || undefined,
@@ -198,6 +201,7 @@ async function enriquecerUnidades(productos: Producto[], sucursalId?: string) {
     return {
       ...producto,
       variantes: variantesConPrecio,
+      imagen_url: extra.imagen_url || producto.imagen_url,
       unidad_base: extra.unidad_base,
       unidades_alternativas: extra.unidades_alternativas,
       unidades_disponibles: buildUnidadesDisponibles(extra.unidad_base, extra.unidades_alternativas),
@@ -212,8 +216,23 @@ export function useProductos(_includeCost = false, sucursalId?: string) {
   const [productos, setProductos] = useState<Producto[]>([]);
   const [imagenes, setImagenes] = useState<Record<string, string[]>>({});
   const [searchResults, setSearchResults] = useState<Producto[]>([]);
+  const [imageError, setImageError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);
+
+  const loadImages = useCallback(async (ids: Array<string | number>, replace = false) => {
+    try {
+      const imgs = ids.length ? await fetchImagesForProductIds(ids, sucursalId) : [];
+      const grouped = agruparImagenes(imgs);
+      setImagenes(prev => replace ? grouped : { ...prev, ...grouped });
+      setImageError(false);
+    } catch (error) {
+      // An image query failure must not discard the loaded sale products.
+      console.error('No se pudieron consultar las imágenes de productos:', error);
+      setImageError(true);
+      if (replace) setImagenes({});
+    }
+  }, [sucursalId]);
 
   const fetchProductos = useCallback(async () => {
     const selectFields = 'producto_id, nombre, precio_base, stock_total, codigo_barra, categoria, category_id, variantes';
@@ -243,16 +262,13 @@ export function useProductos(_includeCost = false, sucursalId?: string) {
       const productosData = await enriquecerUnidades(productosBase, sucursalId);
       setProductos(productosData);
       const ids = productosData.map(p => p.user_id).filter(Boolean);
-      if (ids.length) {
-        const imgs = await fetchImagesForProductIds(ids, sucursalId);
-        if (Array.isArray(imgs)) setImagenes(agruparImagenes(imgs));
-      }
+      await loadImages(ids, true);
     } catch {
       setProductos([]);
       setImagenes({});
     }
     setLoading(false);
-  }, [sucursalId]);
+  }, [sucursalId, loadImages]);
 
   const searchProductos = useCallback(async (q: string) => {
     setSearchLoading(true);
@@ -408,12 +424,7 @@ export function useProductos(_includeCost = false, sucursalId?: string) {
       setSearchResults(resultados);
       // cargar imágenes para resultados
       const ids = resultados.map(r => r.user_id).filter(Boolean);
-      if (ids.length) {
-        const imgs = await fetchImagesForProductIds(ids, sucursalId);
-        if (Array.isArray(imgs)) {
-          setImagenes(prev => ({ ...prev, ...agruparImagenes(imgs) }));
-        }
-      }
+      await loadImages(ids);
       return resultados;
     } catch (e) {
       // console.error('searchProductos error', e);
@@ -422,7 +433,7 @@ export function useProductos(_includeCost = false, sucursalId?: string) {
     } finally {
       setSearchLoading(false);
     }
-  }, [sucursalId]);
+  }, [sucursalId, loadImages]);
 
   useEffect(() => {
     fetchProductos();
@@ -431,6 +442,7 @@ export function useProductos(_includeCost = false, sucursalId?: string) {
   return {
     productos,
     imagenes,
+    imageError,
     searchResults,
     loading,
     searchLoading,

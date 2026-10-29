@@ -1,4 +1,6 @@
 "use client";
+import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
+
 import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
 import { useEffect, useMemo, useState } from "react";
@@ -707,7 +709,7 @@ export default function AumentarStockPage() {
                       <div className="h-14 w-14 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
                         {imagenPrincipalByProducto[pid] ? (
                           <img
-                            src={imagenPrincipalByProducto[pid]}
+                            src={resolveStorageImageUrl(imagenPrincipalByProducto[pid])}
                             alt={prod.nombre}
                             className="h-full w-full object-cover"
                             loading="lazy"

@@ -1,4 +1,5 @@
 "use client";
+import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
 import { fetchCompleteQuery } from "../../../../lib/supabasePagination.js";
 
 import { useEffect, useState } from "react";
@@ -53,7 +54,7 @@ const uploadProductImages = async (files) => {
       .from(BUCKET_NAME)
       .getPublicUrl(filePath);
 
-    return publicUrlData.publicUrl;
+    return resolveStorageImageUrl(publicUrlData.publicUrl);
   });
 
   return (await Promise.all(uploadTasks)).filter(

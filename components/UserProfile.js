@@ -1,4 +1,6 @@
 'use client';
+import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
+import Image from '@/components/StorageImage';
 
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/SupabaseClient';
@@ -113,7 +115,7 @@ export default function UserProfile() {
         .from('perfiles')
         .getPublicUrl(fileName);
 
-      setFotoPerfil(publicUrl);
+      setFotoPerfil(resolveStorageImageUrl(publicUrl));
       setMessage("✅ Foto subida correctamente");
       setTimeout(() => setMessage(""), 3000);
     } catch (error) {

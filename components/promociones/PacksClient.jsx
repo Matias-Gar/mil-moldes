@@ -1,9 +1,10 @@
 "use client";
+import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
 
 
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/SupabaseClient";
-import Image from "next/image";
+import Image from "@/components/StorageImage";
 import { useSucursalActiva } from "@/components/admin/SucursalContext";
 
 function normalizeSearch(value) {
@@ -423,10 +424,10 @@ export default function PacksClient({ initialPacks = [] }) {
                     const file = form.imagen.files[0];
                     if (file) {
                       const filePath = `packs/${editPack.id}_${Date.now()}_${file.name}`;
-                      const { error: uploadError } = await supabase.storage.from('public').upload(filePath, file, { upsert: true });
+                      const { error: uploadError } = await supabase.storage.from('product_images').upload(filePath, file, { upsert: true, contentType: file.type || 'image/jpeg' });
                       if (!uploadError) {
-                        const { data } = supabase.storage.from('public').getPublicUrl(filePath);
-                        imagen_url = data.publicUrl;
+                        const { data } = supabase.storage.from('product_images').getPublicUrl(filePath);
+                        imagen_url = resolveStorageImageUrl(data.publicUrl);
                       } else {
                         alert('Error subiendo imagen: ' + uploadError.message);
                         return;

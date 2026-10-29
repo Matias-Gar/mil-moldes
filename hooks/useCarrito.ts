@@ -3,6 +3,7 @@ import { calcularPrecioConPromocion } from '../lib/promociones';
 import { usePacks, calcularDescuentoPack } from '../lib/packs';
 
 export interface Producto {
+  imagen_url?: string;
   user_id: string | number | null; // For packs, this should be null
   variante_id?: string | number;
   stock?: number;

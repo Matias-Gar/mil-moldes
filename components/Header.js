@@ -1,4 +1,6 @@
 "use client";
+import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
+
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -99,7 +101,7 @@ export default function Header() {
             <div className="flex items-center justify-center gap-2 text-2xl font-extrabold text-white cursor-pointer hover:text-indigo-400 transition duration-200">
               {storeSettings.store_logo_url ? (
                 <img
-                  src={storeSettings.store_logo_url}
+                  src={resolveStorageImageUrl(storeSettings.store_logo_url)}
                   alt="Logo tienda"
                   className="h-9 w-9 rounded-full object-cover border border-white/20"
                 />
@@ -170,7 +172,7 @@ export default function Header() {
           <div className="flex items-center gap-3 text-3xl font-extrabold text-white cursor-pointer hover:text-indigo-400 transition duration-200">
             {storeSettings.store_logo_url ? (
               <img
-                src={storeSettings.store_logo_url}
+                src={resolveStorageImageUrl(storeSettings.store_logo_url)}
                 alt="Logo tienda"
                 className="h-10 w-10 rounded-full object-cover border border-white/20"
               />

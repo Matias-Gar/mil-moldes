@@ -1,4 +1,6 @@
 "use client";
+import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
+
 
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/SupabaseClient';
@@ -71,7 +73,7 @@ export default function StoreSettingsPage() {
         .from(STORE_LOGO_BUCKET)
         .getPublicUrl(filePath);
 
-      onChange('store_logo_url', publicUrlData.publicUrl);
+      onChange('store_logo_url', resolveStorageImageUrl(publicUrlData.publicUrl));
       setStatus('Logo subido correctamente. Ahora guarda los cambios para aplicarlo en toda la web.');
     } catch (error) {
       setStatus(`No se pudo subir el logo. ${error?.message || 'Revisa el bucket y los permisos de Supabase Storage.'}`);
@@ -222,7 +224,7 @@ export default function StoreSettingsPage() {
           <div className="flex items-center gap-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
             {form.store_logo_url ? (
               <img
-                src={form.store_logo_url}
+                src={resolveStorageImageUrl(form.store_logo_url)}
                 alt="Logo de tienda"
                 className="h-14 w-14 rounded-full border border-gray-200 object-cover"
               />

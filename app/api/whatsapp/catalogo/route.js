@@ -1,3 +1,4 @@
+import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
 import { fetchCompleteQuery } from "../../../../lib/supabasePagination.js";
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
@@ -111,7 +112,7 @@ export async function GET() {
         if (!imagenesAgrupadas[img.producto_id]) {
           imagenesAgrupadas[img.producto_id] = [];
         }
-        imagenesAgrupadas[img.producto_id].push(img.imagen_url);
+        imagenesAgrupadas[img.producto_id].push(resolveStorageImageUrl(img.imagen_url));
       });
     }
 

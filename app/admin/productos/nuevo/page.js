@@ -1,9 +1,10 @@
 "use client";
+import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
 import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
 import dynamic from 'next/dynamic';
 import { useEffect, useState, useRef } from 'react';
-import Image from 'next/image';
+import Image from "@/components/StorageImage";
 import { supabase } from "../../../../lib/SupabaseClient";
 import { usePathname, useRouter } from "next/navigation";
 import { v4 as uuidv4 } from 'uuid';
@@ -461,7 +462,7 @@ const uploadProductImages = async (files) => {
             .from(BUCKET_NAME)
             .getPublicUrl(filePath);
 
-        return publicUrlData.publicUrl;
+        return resolveStorageImageUrl(publicUrlData.publicUrl);
     });
 
     return Promise.all(uploadTasks);

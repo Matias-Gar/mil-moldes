@@ -1,7 +1,8 @@
 "use client";
+import { availableProductsFirst } from "@/lib/productAvailability.js";
 
 import React from "react";
-import Image from "next/image";
+import Image from "@/components/StorageImage";
 import { getOptimizedImageUrl } from "@/lib/imageOptimization";
 import { calcularPrecioConPromocion } from "@/lib/promociones";
 import type { Pack, Producto } from "@/hooks/useCarrito";
@@ -171,8 +172,9 @@ export default function BuscadorProductos({
               ))}
 
             {!searchLoading &&
-              searchResults.slice(0, 20).map((p) => {
+              availableProductsFirst(searchResults, (p) => Number(p.stock || 0) <= 0).slice(0, 20).map((p) => {
                 const precioInfo = calcularPrecioConPromocion(p, promociones);
+                const imageUrl = imagenes[String(p.user_id)]?.[0] || p.imagen_url || p.variantes?.find(v => v.imagen_url)?.imagen_url;
                 return (
                   <li
                     key={String(p.user_id ?? `tmp-${p.nombre}`)}
@@ -180,9 +182,9 @@ export default function BuscadorProductos({
                   >
                   <div className="flex items-center gap-3 truncate">
                     <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded bg-gray-50">
-                      {imagenes[String(p.user_id)]?.[0] ? (
+                      {imageUrl ? (
                         <Image
-                          src={getOptimizedImageUrl(imagenes[String(p.user_id)][0], 120, {
+                          src={getOptimizedImageUrl(imageUrl, 120, {
                             quality: 94,
                             format: "origin",
                           })}

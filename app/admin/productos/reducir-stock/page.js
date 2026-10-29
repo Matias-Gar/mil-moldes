@@ -1,4 +1,6 @@
 "use client";
+import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
+
 import { fetchCompleteQuery } from "../../../../lib/supabasePagination.js";
 
 import { useEffect, useMemo, useState } from "react";
@@ -164,7 +166,7 @@ export default function ReducirStockPage() {
               return <article key={pid} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="h-14 w-14 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">{images[pid] ? <img src={images[pid]} alt={product.nombre} className="h-full w-full object-cover" loading="lazy" /> : <div className="flex h-full w-full items-center justify-center text-xs font-semibold text-slate-400">IMG</div>}</div>
+                    <div className="h-14 w-14 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">{images[pid] ? <img src={resolveStorageImageUrl(images[pid])} alt={product.nombre} className="h-full w-full object-cover" loading="lazy" /> : <div className="flex h-full w-full items-center justify-center text-xs font-semibold text-slate-400">IMG</div>}</div>
                     <div><h2 className="text-lg font-bold text-slate-900">{product.nombre}</h2><p className="text-xs text-slate-500">ID: {product.user_id} | Categoría: {categoryName(product)} | Código: {product.codigo_barra || "-"}</p></div>
                   </div>
                   <div className="rounded-xl bg-slate-100 px-3 py-2 text-right text-sm font-semibold text-slate-700">Stock actual: {humanStock(product, n(product.stock))}</div>

@@ -1,6 +1,6 @@
 "use client";
 import React from 'react';
-import Image from 'next/image';
+import Image from "@/components/StorageImage";
 import { PrecioConPromocion, calcularPrecioConPromocion } from '../../lib/promociones';
 import { calcularDescuentoPack } from '../../lib/packs';
 import { CartItem, Pack, PackProduct } from '../../hooks/useCarrito';
@@ -124,14 +124,13 @@ export default function CarritoPanel({
                 }
                 const precioInfo = calcularPrecioConPromocion(item, promociones);
                 const itemKey = item.cart_key || `prod:${String(item.user_id)}:${String(item.variante_id ?? 'default')}`;
-                // Lógica para imagen: variante > item.imagen_url > imagenes[1] > imagenes[0]
+                // Lógica para imagen: variante > item.imagen_url > imagenes[0]
                 let imagenUrl = null;
                 if (item.variante_id && item.variantes) {
                   const variante = item.variantes.find(v => String(v.id || v.variante_id) === String(item.variante_id));
                   if (variante && variante.imagen_url) imagenUrl = variante.imagen_url;
                 }
                 if (!imagenUrl && item.imagen_url) imagenUrl = item.imagen_url;
-                if (!imagenUrl && imagenes[String(item.user_id)]?.[1]) imagenUrl = imagenes[String(item.user_id)][1];
                 if (!imagenUrl && imagenes[String(item.user_id)]?.[0]) imagenUrl = imagenes[String(item.user_id)][0];
                 const unidadesDisponibles = Array.isArray(item.unidades_disponibles) && item.unidades_disponibles.length > 0
                   ? item.unidades_disponibles

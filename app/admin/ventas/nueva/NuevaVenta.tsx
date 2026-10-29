@@ -196,6 +196,7 @@ export default function NuevaVenta() {
   const {
     productos,
     imagenes,
+    imageError,
     searchResults,
     searchLoading,
     fetchProductos,
@@ -366,7 +367,7 @@ export default function NuevaVenta() {
               descuento: ((pack.pack_productos ?? []).reduce((t: number, i: { productos: { precio: number }, cantidad: number }) => t + (i.productos.precio * i.cantidad), 0)) - pack.precio_pack,
               productos: pack.pack_productos ?? [],
               cart_key: `pack:${pack.id}`,
-              imagen_url: pack.imagen_url || '/sin-imagen.png',
+              imagen_url: pack.imagen_url || '/sin-imagen.svg',
             };
           }
           // Producto normal
@@ -384,7 +385,7 @@ export default function NuevaVenta() {
             : null;
           // Siempre usar la imagen del producto
           const imagenesProducto = imagenesDB[productoCompleto.producto_id] || [];
-          const imagen_url = imagenesProducto.length > 0 ? imagenesProducto[0] : '/sin-imagen.png';
+          const imagen_url = imagenesProducto[0] || productoCompleto.imagen_url || varianteSeleccionada?.imagen_url || '/sin-imagen.svg';
           const unidadBase = p.unidad_base || unidadesProducto.unidad_base || productoCompleto.unidad_base || p.unidad || 'unidad';
           const unidadesAlternativas = Array.isArray(p.unidades_alternativas)
             ? p.unidades_alternativas
@@ -1067,6 +1068,11 @@ export default function NuevaVenta() {
   return (
     <div className="min-h-screen w-full flex flex-col items-center justify-start py-8 px-2 sm:px-4 bg-gradient-to-br from-gray-100 to-gray-300">
       <h1 className="text-3xl font-extrabold mb-8 text-gray-900 w-full text-center">Nueva Venta</h1>
+      {imageError && (
+        <p role="alert" className="w-full max-w-[1500px] mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-amber-900">
+          No se pudieron cargar las imágenes. Puedes seguir buscando productos. Vuelve a intentar en unos momentos.
+        </p>
+      )}
       <div className="w-full max-w-[1500px] grid grid-cols-1 xl:grid-cols-[360px_minmax(0,1fr)] gap-6 bg-white rounded-xl shadow-xl p-0 mb-8 border border-gray-900">
         <div className="bg-gray-50 border-b xl:border-b-0 xl:border-r border-gray-200 p-6 sticky top-16 z-0 print:hidden flex flex-col h-full">
           <div className="flex flex-col gap-4">

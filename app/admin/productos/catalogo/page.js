@@ -1,4 +1,7 @@
 "use client";
+import { availableProductsFirst } from "@/lib/productAvailability.js";
+import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
+
 import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
 import React, { useEffect, useState } from "react";
@@ -173,11 +176,11 @@ export default function CatalogoPage() {
           for (const p of candidatePaths) {
             if (!p) continue;
             if (typeof p === "string" && (p.startsWith("http://") || p.startsWith("https://"))) {
-              imagenPublicUrls.push(p);
+              imagenPublicUrls.push(resolveStorageImageUrl(p));
               continue;
             }
             const pub = await tryGetPublicUrlFromBuckets(p);
-            if (pub) imagenPublicUrls.push(pub);
+            if (pub) imagenPublicUrls.push(resolveStorageImageUrl(pub));
           }
 
           return {
@@ -269,11 +272,11 @@ export default function CatalogoPage() {
     return { backgroundColor: '#9CA3AF' };
   };
 
-  const productosFiltrados = productos.filter((p) => {
+  const productosFiltrados = availableProductsFirst(productos.filter((p) => {
     const matchCategoria = categoriaSeleccionada === "Todas" || p.categoriaNombre === categoriaSeleccionada;
     const matchVista = vistaSeleccionada === "Todas" || p.vistaProducto === vistaSeleccionada;
     return matchCategoria && matchVista;
-  });
+  }), (p) => Number(p.stock || 0) <= 0);
 
   async function toBase64(url) {
     try {

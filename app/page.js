@@ -1,4 +1,7 @@
 "use client";
+import { availableProductsFirst } from "@/lib/productAvailability.js";
+import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
+
 import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
 import React, { useState, useEffect } from 'react';
@@ -475,7 +478,7 @@ export default function Home() {
 
 
   // 2. Definición de la variable calculada: productosFiltrados
-  const productosFiltrados = productos.filter(p => {
+  const productosFiltrados = availableProductsFirst(productos.filter(p => {
     const term = busqueda.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
     const matchesBusqueda = !term || [
       p.nombre,
@@ -490,7 +493,7 @@ export default function Home() {
     const match = Number(p.category_id) === Number(filtroCategoria);
     // console.log('🔍 Filtro categoria PRINCIPAL:', { producto: p.nombre, categoria_producto: p.category_id, categoria_seleccionada: filtroCategoria, match });
     return match;
-  });
+  }), (p) => getProductStockBase(p) <= 0);
 
   const categoriasVisibles = categorias.filter((cat) =>
     productos.some((p) => Number(p.category_id) === Number(cat.id))
@@ -636,7 +639,7 @@ export default function Home() {
                                 onClick={() => openImageModal([imgUrl], 0, prod?.nombre)}
                               >
                                 <img
-                                  src={imgUrl}
+                                  src={resolveStorageImageUrl(imgUrl)}
                                   alt={prod?.nombre}
                                   width={32}
                                   height={32}

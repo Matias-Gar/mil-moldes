@@ -1,9 +1,12 @@
 "use client";
+import { availableProductsFirst } from "@/lib/productAvailability.js";
+import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
+
 import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
 // --- IMPORTS Y HOOKS NECESARIOS ---
 import React, { useState, useEffect } from "react";
-import Image from "next/image";
+import Image from "@/components/StorageImage";
 import { usePathname } from "next/navigation";
 import { usePromociones } from "@/lib/usePromociones";
 import { usePacks, calcularDescuentoPack } from "@/lib/packs";
@@ -338,7 +341,7 @@ export default function CatalogoPage() {
                     unidades_alternativas: Array.isArray(extra.unidades_alternativas) ? extra.unidades_alternativas : item.unidades_alternativas,
                     factor_conversion: Number(extra.factor_conversion || 0) || item.factor_conversion,
                     vista_producto: normalizeProductView(extra.vista_producto),
-                    stock: productVariants.length > 0 ? variantStock : productStock
+                    stock: Array.isArray(variantes) && variantes.length > 0 ? variantStock : productStock
                 };
             });
         } catch {
@@ -378,10 +381,9 @@ export default function CatalogoPage() {
                         stock: (() => {
                                 // Si tiene variantes, sumar stock de variantes
                                 if (Array.isArray(p.variantes) && p.variantes.length > 0) {
-                                        const stockBase = Number(p.stock_total || 0);
                                 const variantStock = p.variantes.reduce((acc, v) => acc + getEffectiveVariantStock(v), 0);
                                 const hasUnitConversion = Array.isArray(p.unidades_alternativas) && p.unidades_alternativas.length > 0 && Number(p.factor_conversion) > 0;
-                                return variantesProducto.length > 0 ? variantStock : stockBase;
+                                return variantStock;
                                 }
                                 const stockBase = Number(p.stock_total || 0);
                                 // Si hay conversión y unidades alternativas, calcular stock alternativo
@@ -1193,7 +1195,7 @@ export default function CatalogoPage() {
                                                             onClick={() => setModalImg({ urls: [imgUrl], index: 0, nombre: prod?.nombre })}
                                                         >
                                                             <img
-                                                                src={imgUrl}
+                                                                src={resolveStorageImageUrl(imgUrl)}
                                                                 alt={prod?.nombre}
                                                                 width={32}
                                                                 height={32}
@@ -1290,7 +1292,7 @@ export default function CatalogoPage() {
 
                         // ...existing code...
 
-                        return productosFiltrados.map((producto, idx) => {
+                        return availableProductsFirst(productosFiltrados, isProductoAgotado).map((producto, idx) => {
                             const quantityInCart = cart
                                 .filter(item => item.tipo !== 'pack' && String(item.user_id) === String(producto.user_id))
                                 .reduce((acc, item) => acc + Number(item.cantidad || 0), 0);
