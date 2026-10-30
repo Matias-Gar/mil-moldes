@@ -71,13 +71,19 @@ export async function optimizeImageForUpload(
   options: UploadOptimizeOptions = {}
 ): Promise<OptimizedUploadResult> {
   const cfg = { ...DEFAULTS, ...options }
-
-  if (!file?.type?.startsWith("image/")) {
+  const originalResult = (): OptimizedUploadResult => {
+    if (file.size > cfg.hardMaxBytes) {
+      throw new Error(`La imagen "${file.name}" supera el limite de ${(cfg.hardMaxBytes / 1024 / 1024).toFixed(1)} MB y no se pudo reducir. Usa una imagen mas pequena.`)
+    }
     return { file, optimized: false, originalBytes: file.size, finalBytes: file.size }
   }
 
+  if (!file?.type?.startsWith("image/")) {
+    return originalResult()
+  }
+
   if (SKIP_MIME_TYPES.has(file.type)) {
-    return { file, optimized: false, originalBytes: file.size, finalBytes: file.size }
+    return originalResult()
   }
 
   const originalBytes = file.size
@@ -97,7 +103,7 @@ export async function optimizeImageForUpload(
     const needsOptimization = originalBytes > cfg.targetMaxBytes || needResize
 
     if (!needsOptimization) {
-      return { file, optimized: false, originalBytes, finalBytes: originalBytes }
+      return originalResult()
     }
 
     const canvas = document.createElement("canvas")
@@ -106,7 +112,7 @@ export async function optimizeImageForUpload(
 
     const ctx = canvas.getContext("2d", { alpha: true })
     if (!ctx) {
-      return { file, optimized: false, originalBytes, finalBytes: originalBytes }
+      return originalResult()
     }
 
     ctx.imageSmoothingEnabled = true
@@ -128,12 +134,12 @@ export async function optimizeImageForUpload(
     }
 
     if (!bestBlob) {
-      return { file, optimized: false, originalBytes, finalBytes: originalBytes }
+      return originalResult()
     }
 
     // Si no mejora y todavía no supera límite duro, conservar original para máxima fidelidad.
     if (bestBlob.size >= originalBytes && originalBytes <= cfg.hardMaxBytes) {
-      return { file, optimized: false, originalBytes, finalBytes: originalBytes }
+      return originalResult()
     }
 
     if (bestBlob.size > cfg.hardMaxBytes) {
@@ -156,6 +162,6 @@ export async function optimizeImageForUpload(
       finalBytes: optimizedFile.size,
     }
   } catch {
-    return { file, optimized: false, originalBytes, finalBytes: originalBytes }
+    return originalResult()
   }
 }

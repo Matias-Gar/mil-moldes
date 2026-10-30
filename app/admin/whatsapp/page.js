@@ -1,5 +1,5 @@
 "use client";
-import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
+import { createProductImageUploader } from "@/lib/productImageStorage.js";
 
 
 import { useEffect, useMemo, useState } from 'react';
@@ -7,12 +7,17 @@ import { supabase } from '../../../lib/SupabaseClient';
 import { optimizeImageForUpload } from '../../../lib/imageUploadOptimization';
 import { DEFAULT_STORE_SETTINGS, fetchStoreSettings, saveStoreSettings } from '../../../lib/storeSettings';
 
-const STORE_LOGO_BUCKET = 'product_images';
-
-function getFileExtension(fileName) {
-  const parts = String(fileName || '').split('.');
-  return parts.length > 1 ? parts.pop().toLowerCase() : 'jpg';
-}
+const uploadStoreLogo = createProductImageUploader({
+  supabase,
+  folder: 'store',
+  optimizeImageForUpload: (file) => optimizeImageForUpload(file, {
+    maxDimension: 1800,
+    targetMaxBytes: 1.8 * 1024 * 1024,
+    hardMaxBytes: 3 * 1024 * 1024,
+    preferredQuality: 0.96,
+    minQuality: 0.88,
+  }),
+});
 
 export default function StoreSettingsPage() {
   const [form, setForm] = useState(DEFAULT_STORE_SETTINGS);
@@ -47,33 +52,8 @@ export default function StoreSettingsPage() {
     setStatus('');
 
     try {
-      const { file: preparedFile } = await optimizeImageForUpload(selectedFile, {
-        maxDimension: 1800,
-        targetMaxBytes: 1.8 * 1024 * 1024,
-        hardMaxBytes: 3 * 1024 * 1024,
-        preferredQuality: 0.96,
-        minQuality: 0.88,
-      });
-
-      const extension = getFileExtension(preparedFile.name);
-      const filePath = `store/logo-${crypto.randomUUID()}.${extension}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from(STORE_LOGO_BUCKET)
-        .upload(filePath, preparedFile, {
-          cacheControl: '3600',
-          upsert: true,
-        });
-
-      if (uploadError) {
-        throw new Error(uploadError.message);
-      }
-
-      const { data: publicUrlData } = supabase.storage
-        .from(STORE_LOGO_BUCKET)
-        .getPublicUrl(filePath);
-
-      onChange('store_logo_url', resolveStorageImageUrl(publicUrlData.publicUrl));
+      const [url] = await uploadStoreLogo([selectedFile]);
+      onChange('store_logo_url', url);
       setStatus('Logo subido correctamente. Ahora guarda los cambios para aplicarlo en toda la web.');
     } catch (error) {
       setStatus(`No se pudo subir el logo. ${error?.message || 'Revisa el bucket y los permisos de Supabase Storage.'}`);

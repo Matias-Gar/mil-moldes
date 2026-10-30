@@ -1,5 +1,6 @@
 "use client";
-import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
+import { createProductImageUploader } from "@/lib/productImageStorage.js";
+import { requireAffectedRows, syncProductImageReferences } from "@/lib/productImageReferences.js";
 import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
 import dynamic from 'next/dynamic';
@@ -7,7 +8,6 @@ import { useEffect, useState, useRef } from 'react';
 import Image from "@/components/StorageImage";
 import { supabase } from "../../../../lib/SupabaseClient";
 import { usePathname, useRouter } from "next/navigation";
-import { v4 as uuidv4 } from 'uuid';
 import { getOptimizedImageUrl, buildImageSrcSet } from '../../../../lib/imageOptimization';
 import { optimizeImageForUpload } from '../../../../lib/imageUploadOptimization';
 
@@ -427,46 +427,7 @@ function DeleteConfirmationModal({ isOpen, onClose, onConfirm, productName }) {
 // --------------------------------------------------------------------------
 // Lógica para subir la imagen a Supabase Storage (¡REVISAR RLS DE STORAGE!)
 // --------------------------------------------------------------------------
-const uploadProductImages = async (files) => {
-    if (!files || files.length === 0) return [];
-    const BUCKET_NAME = 'product_images';
-    // Usar un prefijo genérico para todos los usuarios (no requiere login para ver)
-    const userId = 'public';
-
-    const uploadTasks = files.map(async (file) => {
-        const { file: preparedFile } = await optimizeImageForUpload(file, {
-            maxDimension: 2600,
-            targetMaxBytes: 2.8 * 1024 * 1024,
-            hardMaxBytes: 4.2 * 1024 * 1024,
-            preferredQuality: 0.98,
-            minQuality: 0.9,
-        });
-
-        const fileExtension = (preparedFile.name.split('.').pop() || 'jpg').toLowerCase();
-        const fileName = `${uuidv4()}.${fileExtension}`;
-        const filePath = `${userId}/${fileName}`;
-
-        const { error: uploadError } = await supabase.storage
-            .from(BUCKET_NAME)
-            .upload(filePath, preparedFile, {
-                cacheControl: '31536000',
-                upsert: false,
-                contentType: preparedFile.type || 'image/jpeg'
-            });
-
-        if (uploadError) {
-            throw new Error(`Error al subir imagen a storage (Bucket: ${BUCKET_NAME}): ${uploadError.message}`);
-        }
-
-        const { data: publicUrlData } = supabase.storage
-            .from(BUCKET_NAME)
-            .getPublicUrl(filePath);
-
-        return resolveStorageImageUrl(publicUrlData.publicUrl);
-    });
-
-    return Promise.all(uploadTasks);
-};
+const uploadProductImages = createProductImageUploader({ supabase, optimizeImageForUpload });
 
 function isMissingColumnError(error, columnName) {
     return String(error?.message || '').toLowerCase().includes(String(columnName).toLowerCase());
@@ -512,6 +473,9 @@ export default function AdminProductosPage() {
     const [imagenesProductos, setImagenesProductos] = useState({});
     const [variantesProductos, setVariantesProductos] = useState({});
     const newImageInputRef = useRef(null);
+    const createdProductRef = useRef(null);
+    const createBusyRef = useRef(false);
+    const [creationNeedsReview, setCreationNeedsReview] = useState(false);
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [productToDelete, setProductToDelete] = useState(null);
     const [categories, setCategories] = useState([]);
@@ -1261,7 +1225,7 @@ export default function AdminProductosPage() {
     const openEditModal = (producto) => {
         setEditingProduct(producto);
         setEditImageFiles([]);
-        setEditImageList(imagenesProductos[producto.user_id] || []);
+        setEditImageList(Array.from(new Set([producto.imagen_url, ...(imagenesProductos[producto.user_id] || [])].filter(url => url && url !== "/sin-imagen.png"))));
         setMessage('');
     };
 
@@ -1475,6 +1439,11 @@ export default function AdminProductosPage() {
     // Funcion para anadir producto
     const handleAnadirProducto = async (e) => {
         e.preventDefault();
+        if (createBusyRef.current) return;
+        if (createdProductRef.current != null) {
+            setMessage(`El articulo ${createdProductRef.current} ya fue creado. Revisa sus datos en Editar Articulos antes de intentar otra alta.`);
+            return;
+        }
         setMessage("");
 
         const canContinue = confirmMissingProductData({
@@ -1487,29 +1456,25 @@ export default function AdminProductosPage() {
             return;
         }
 
+        createBusyRef.current = true;
         setLoading(true);
-        // Validar nombre duplicado antes de guardar
-        let duplicateQuery = supabase
-            .from("productos")
-            .select("user_id")
-            .ilike("nombre", newProduct.nombre.trim())
-            .or("archivado.eq.false,archivado.is.null");
-        if (activeSucursalId) duplicateQuery = duplicateQuery.eq('sucursal_id', activeSucursalId);
-        const { data: productosConNombre, error: errorNombre } = await fetchCompleteQuery(duplicateQuery, "user_id");
-        if (!errorNombre && productosConNombre && productosConNombre.length > 0) {
-            setShowNameRepeatModal(true);
-            setLoading(false);
-            return;
-        }
-
         let imagenUrls = [];
         try {
-            // Subir imágenes ANTES de insertar en la tabla
-            if (imageFiles && imageFiles.length > 0) {
-                imagenUrls = await uploadProductImages(imageFiles);
-                // Filtrar URLs vacías, nulas o inválidas
-                imagenUrls = imagenUrls.filter(url => typeof url === 'string' && url.trim().length > 0 && url.startsWith('http'));
+            // Validar nombre duplicado antes de guardar
+            let duplicateQuery = supabase
+                .from("productos")
+                .select("user_id")
+                .ilike("nombre", newProduct.nombre.trim())
+                .or("archivado.eq.false,archivado.is.null");
+            if (activeSucursalId) duplicateQuery = duplicateQuery.eq('sucursal_id', activeSucursalId);
+            const { data: productosConNombre, error: errorNombre } = await fetchCompleteQuery(duplicateQuery, "user_id");
+            if (errorNombre) throw errorNombre;
+            if (productosConNombre && productosConNombre.length > 0) {
+                setShowNameRepeatModal(true);
+                setLoading(false);
+                return;
             }
+
             const categoryIdValue = newProduct.category_id ? parseInt(newProduct.category_id) : null;
             const usedVariantCodes = new Set();
             const variantsPayload = (newVariants || [])
@@ -1541,6 +1506,12 @@ export default function AdminProductosPage() {
                 throw new Error('Debes agregar al menos una variante.');
             }
 
+            // Subir imágenes ANTES de insertar en la tabla
+            if (imageFiles && imageFiles.length > 0) {
+                imagenUrls = await uploadProductImages(imageFiles);
+                // Filtrar URLs vacías, nulas o inválidas
+                imagenUrls = imagenUrls.filter(url => typeof url === 'string' && url.trim().length > 0 && url.startsWith('http'));
+            }
             const stockTotal = variantsPayload.reduce((sum, v) => sum + (Number(v.stock) || 0), 0);
             const codigoBarra = String(newProduct.codigo_barra || '').trim() || null;
 
@@ -1574,7 +1545,7 @@ export default function AdminProductosPage() {
                 stock: 0,
                 category_id: categoryIdValue,
                 codigo_barra: codigoBarra,
-                imagen_url: null,
+                imagen_url: imagenUrls[0] || null,
                 sucursal_id: activeSucursalId || null,
                 created_at: new Date().toISOString()
             };
@@ -1623,21 +1594,17 @@ export default function AdminProductosPage() {
                 throw new Error(String(insertError.message || insertError));
             }
 
-            const productoId = productoInsertado?.[0]?.id ?? productoInsertado?.[0]?.user_id;
+            const productoId = productoInsertado?.[0]?.user_id;
+            if (productoId == null) throw new Error('No se pudo confirmar el identificador del articulo creado. Revisa el catalogo antes de reintentar.');
+            createdProductRef.current = productoId;
 
             // Insertar las imágenes en la tabla producto_imagenes
             if (productoId && imagenUrls.length > 0) {
                 const imagesToInsert = imagenUrls.map(url => ({ producto_id: productoId, imagen_url: url, sucursal_id: activeSucursalId || null }));
                 const { error: imgInsertError } = await insertWithOptionalSucursal('producto_imagenes', imagesToInsert);
                 if (imgInsertError) {
-                    // Si falla la inserción, intentar borrar las imágenes subidas al storage
-                    for (const url of imagenUrls) {
-                        try {
-                            const path = url.split('/').slice(-2).join('/'); // public/uuid.jpg
-                            await supabase.storage.from('product_images').remove([path]);
-                        } catch {}
-                    }
-                    setImageFiles([]);
+                    // The product exists already. Keep images and draft for recovery;
+                    // deleting here could break an already committed reference.
                     throw new Error(`Error al insertar imágenes: ${imgInsertError.message}`);
                 }
             }
@@ -1740,6 +1707,7 @@ export default function AdminProductosPage() {
                         } catch (err) {
                                 console.warn('No se pudo registrar movimiento/historial de creacion:', err);
                         }
+            createdProductRef.current = null;
             setMessage('Producto creado con exito!');
             // Limpieza reforzada de todos los campos y sessionStorage
             setNewProduct({ nombre: '', descripcion: '', precio: '', precio_compra: '', category_id: '', codigo_barra: '', vista_producto: currentProductView, unidad_base: 'unidad', unidades_alternativas: [], factor_conversion: 1 });
@@ -1753,11 +1721,27 @@ export default function AdminProductosPage() {
             }, 100);
             fetchProductos();
         } catch (e) {
+            setCreationNeedsReview(createdProductRef.current != null);
             console.error("Error critico al crear producto:", e);
-            setMessage(`Error critico al crear: ${e.message}`);
+            setMessage(createdProductRef.current != null
+                ? `El articulo ${createdProductRef.current} ya fue creado, pero quedo incompleto: ${e.message}. Revisalo en Editar Articulos; no repitas el alta.`
+                : `Error al crear: ${e.message}`);
         } finally {
+            createBusyRef.current = false;
             setLoading(false);
         }
+    };
+
+    const startAnotherProduct = () => {
+        if (createBusyRef.current) return;
+        createdProductRef.current = null;
+        setCreationNeedsReview(false);
+        setMessage('');
+        setNewProduct({ nombre: '', descripcion: '', precio: '', precio_compra: '', category_id: '', codigo_barra: '', vista_producto: currentProductView, unidad_base: 'unidad', unidades_alternativas: [], factor_conversion: 1 });
+        setNewVariants([createVariantDraft([], { color: '' })]);
+        sessionStorage.removeItem('pendingProduct');
+        setImageFiles([]);
+        if (newImageInputRef.current) newImageInputRef.current.value = '';
     };
 
     const handleDelete = async (producto) => {
@@ -1784,9 +1768,11 @@ export default function AdminProductosPage() {
                 codigo_barra: null,
             }).eq('user_id', productToDelete.user_id);
             if (activeSucursalId) archiveQuery = archiveQuery.eq('sucursal_id', activeSucursalId);
-            const { error } = await archiveQuery;
-            if (error) throw error;
-            await supabase.from('producto_variantes').update({ activo: false }).eq('producto_id', productToDelete.user_id);
+            await requireAffectedRows(archiveQuery, "user_id", "No se pudo archivar el producto. Verifica los permisos y la sucursal.");
+            let variantArchive = supabase.from('producto_variantes').update({ activo: false }).eq('producto_id', productToDelete.user_id);
+            if (activeSucursalId) variantArchive = variantArchive.eq('sucursal_id', activeSucursalId);
+            const { error: variantArchiveError } = await variantArchive;
+            if (variantArchiveError) throw variantArchiveError;
             setMessage(`Producto "${productToDelete.nombre}" archivado con éxito.`);
             fetchProductos();
         } catch (e) {
@@ -1833,47 +1819,17 @@ export default function AdminProductosPage() {
                     precio_compra: parseFloat(editingProduct.precio_compra) || 0,
                     category_id: categoryIdValue,
                     vista_producto: normalizeProductView(editingProduct.vista_producto || currentProductView),
+                    imagen_url: [...editImageList, ...nuevasUrls][0] || null,
                 })
                 .eq('user_id', editingProduct.user_id);
             if (activeSucursalId) updateQuery = updateQuery.eq('sucursal_id', activeSucursalId);
-            const { error: updateError } = await updateQuery;
-            if (updateError) {
-                throw new Error(updateError.message);
-            }
+            await requireAffectedRows(updateQuery, "user_id", "No se pudo actualizar el producto. Verifica los permisos y la sucursal.");
 
-            // 3. Eliminar imágenes quitadas (de la tabla producto_imagenes)
-            const originales = imagenesProductos[editingProduct.user_id] || [];
-            // Comparamos las URLs originales con las que quedaron en editImageList
-            const urlsAEliminar = originales.filter(url => !editImageList.includes(url));
-
-            if (urlsAEliminar.length > 0) {
-                // Eliminamos las referencias de la tabla producto_imagenes
-                let deleteImagesQuery = supabase.from('producto_imagenes')
-                    .delete()
-                    .in('imagen_url', urlsAEliminar)
-                    .eq('producto_id', editingProduct.user_id);
-                if (activeSucursalId) deleteImagesQuery = deleteImagesQuery.eq('sucursal_id', activeSucursalId);
-                const { error: deleteImgError } = await deleteImagesQuery;
-
-                if(deleteImgError) console.error("Error al eliminar referencias de imágenes:", deleteImgError.message);
-
-                // NOTA: ELIMINAR del Storage es más complejo y no está implementado aquí,
-                // ya que requeriría el path exacto del archivo, no solo la URL pública.
-                // Esto es una mejora pendiente.
-            }
-
-            // 4. Insertar nuevas imágenes
-            if (nuevasUrls.length > 0) {
-                // Filtrar URLs vacías, nulas o inválidas antes de insertar
-                const validUrls = nuevasUrls.filter(url => typeof url === 'string' && url.trim().length > 0 && url.startsWith('http'));
-                if (validUrls.length > 0) {
-                    const imagesToInsert = validUrls.map(url => ({ producto_id: editingProduct.user_id, imagen_url: url, sucursal_id: activeSucursalId || null }));
-                    const { error: imgInsertError } = await insertWithOptionalSucursal('producto_imagenes', imagesToInsert);
-                    if (imgInsertError) {
-                        throw new Error(imgInsertError.message);
-                    }
-                }
-            }
+            await syncProductImageReferences(supabase, {
+                productId: editingProduct.user_id,
+                branchId: activeSucursalId,
+                urls: [...editImageList, ...nuevasUrls],
+            });
 
             setMessage(`Producto "${editingProduct.nombre}" actualizado con exito.`);
             closeEditModal();
@@ -1984,10 +1940,17 @@ export default function AdminProductosPage() {
 
             {/* Seccion de Mensajes (exito/Error) */}
             {message && (
-                <div className={`p-4 mb-6 rounded-lg font-medium shadow-md ${message.startsWith('Error')
+                <div className={`p-4 mb-6 rounded-lg font-medium shadow-md ${/error|incompleto|ya fue creado/i.test(message)
                     ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
                     {message}
                 </div>
+            )}
+
+            {creationNeedsReview && (
+                <button type="button" onClick={startAnotherProduct} disabled={loading}
+                    className="mb-4 rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white disabled:opacity-50">
+                    Iniciar otro articulo
+                </button>
             )}
 
             {/* 1. Formulario de Anadir Producto */}

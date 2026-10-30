@@ -1,5 +1,6 @@
 "use client";
-import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
+import { createProductImageUploader } from "@/lib/productImageStorage.js";
+import { requireAffectedRows, syncProductImageReferences } from "@/lib/productImageReferences.js";
 import { fetchCompleteQuery } from "../../../../lib/supabasePagination.js";
 
 import { useEffect, useState } from "react";
@@ -15,8 +16,6 @@ import { useSucursalActiva } from "@/components/admin/SucursalContext";
 import { optimizeImageForUpload } from "@/lib/imageUploadOptimization";
 import { loadEditProductCatalog } from "@/lib/editProductCatalog";
 
-const BUCKET_NAME = "product_images";
-
 const isFileImage = (value) =>
   typeof File !== "undefined" && value instanceof File;
 
@@ -27,40 +26,7 @@ const getImageUrl = (image) => {
   return image.imagen_url || "";
 };
 
-const uploadProductImages = async (files) => {
-  const uploadTasks = Array.from(files || []).map(async (file) => {
-    if (!isFileImage(file)) return getImageUrl(file);
-
-    const { file: preparedFile } = await optimizeImageForUpload(file);
-    const safeName = preparedFile.name
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-zA-Z0-9._-]/g, "_");
-    const filePath = `${Date.now()}-${Math.random().toString(36).slice(2)}-${safeName}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from(BUCKET_NAME)
-      .upload(filePath, preparedFile, {
-        cacheControl: "3600",
-        upsert: false,
-        contentType: preparedFile.type || "image/jpeg",
-      });
-
-    if (uploadError) {
-      throw new Error(`Error al subir imagen a storage (Bucket: ${BUCKET_NAME}): ${uploadError.message}`);
-    }
-
-    const { data: publicUrlData } = supabase.storage
-      .from(BUCKET_NAME)
-      .getPublicUrl(filePath);
-
-    return resolveStorageImageUrl(publicUrlData.publicUrl);
-  });
-
-  return (await Promise.all(uploadTasks)).filter(
-    (url) => typeof url === "string" && url.trim().length > 0 && url.startsWith("http")
-  );
-};
+const uploadProductImages = createProductImageUploader({ supabase, optimizeImageForUpload });
 
 export default function EditarCatalogo() {
     const { activeSucursalId } = useSucursalActiva();
@@ -277,6 +243,7 @@ export default function EditarCatalogo() {
     try {
       const cambios = editando[prodId] || {};
       const productoActual = productos.find((p) => getProductKey(p) === prodId);
+      if (!productoActual) throw new Error("El producto ya no esta disponible. Recarga el catalogo.");
       const precioNormalizado = parseDecimalInput(
         cambios.precio,
         parseDecimalInput(productoActual?.precio, 0)
@@ -302,6 +269,22 @@ export default function EditarCatalogo() {
 
       // La edición general solo modifica datos descriptivos. El inventario y los
       // identificadores históricos se gestionan en flujos dedicados.
+      let variantsQuery = supabase.from("producto_variantes")
+        .select("id, producto_id, color, talla, stock, stock_decimal, sku, precio, imagen_url, activo")
+        .eq("producto_id", productoActual.user_id);
+      if (activeSucursalId) variantsQuery = variantsQuery.eq("sucursal_id", activeSucursalId);
+      const { data: variantesBD, error: variantsReadError } = await fetchCompleteQuery(variantsQuery);
+      if (variantsReadError) throw variantsReadError;
+      for (const current of variantesBD) {
+        if (!nuevasVariantes.some(v => v.id === current.id) && Number(current.stock_decimal ?? current.stock ?? 0) > 0) {
+          throw new Error(`No se puede eliminar la variante ${current.color || current.id}: aun tiene stock.`);
+        }
+      }
+      for (const variant of nuevasVariantes) {
+        if (variant.id && !variantesBD.some(current => current.id === variant.id)) {
+          throw new Error("La variante ya no pertenece al producto o a la sucursal activa.");
+        }
+      }
       const uploadedUrls = await uploadProductImages(nuevasImagenesRaw.filter(isFileImage));
       let uploadIndex = 0;
       const nuevasImagenes = nuevasImagenesRaw
@@ -316,7 +299,9 @@ export default function EditarCatalogo() {
         .filter(Boolean);
       // Determinar la imagen principal (primera del array de imágenes)
       const selectedPrimaryUrl = getImageUrl(
-        nuevasImagenes.find((img) => String(img.id) === String(cambios.primaryImageId))
+        cambios.primaryImageId != null
+          ? nuevasImagenes.find((img) => img.id != null && String(img.id) === String(cambios.primaryImageId))
+          : null
       ) || cambios.primaryImageUrl;
       const imagenPrincipal = nuevasImagenes.some((img) => getImageUrl(img) === selectedPrimaryUrl)
         ? selectedPrimaryUrl
@@ -339,36 +324,36 @@ export default function EditarCatalogo() {
         updateQuery = updateQuery.eq("id", prodId);
       }
       if (activeSucursalId) updateQuery = updateQuery.eq("sucursal_id", activeSucursalId);
-      const { error: updateError } = await updateQuery;
-      if (updateError) throw updateError;
+      await requireAffectedRows(updateQuery, productoActual.user_id != null ? "user_id" : "id", "No se pudo actualizar el producto. Verifica los permisos y la sucursal.");
 
       // 2. Sincronizar variantes
-      // Obtener variantes actuales en BD
-      const { data: variantesBD } = await fetchCompleteQuery(supabase
-        .from("producto_variantes")
-        .select("id, producto_id, color, talla, stock, stock_decimal, sku, precio, imagen_url, activo").eq("producto_id", productoActual.user_id), "id");
       // Eliminar variantes quitadas
       for (const vBD of variantesBD || []) {
         if (!nuevasVariantes.some(v => v.id === vBD.id)) {
           const stockActual = Number(vBD.stock_decimal ?? vBD.stock ?? 0);
           if (stockActual > 0) throw new Error(`No se puede eliminar la variante ${vBD.color || vBD.id}: aún tiene stock.`);
-          await supabase.from("producto_variantes").update({ activo: false }).eq("id", vBD.id);
+          let deactivate = supabase.from("producto_variantes").update({ activo: false })
+            .eq("id", vBD.id).eq("producto_id", productoActual.user_id);
+          if (activeSucursalId) deactivate = deactivate.eq("sucursal_id", activeSucursalId);
+          await requireAffectedRows(deactivate, "id", "No se pudo desactivar la variante.");
         }
       }
       // Insertar o actualizar variantes
       for (const v of nuevasVariantes) {
         if (v.id) {
           // Actualizar
-          await supabase.from("producto_variantes").update({
+          let variantUpdate = supabase.from("producto_variantes").update({
             color: v.color,
             talla: v.talla,
             precio: parseDecimalInput(v.precio, null),
             imagen_url: v.imagen_url,
             activo: v.activo !== undefined ? v.activo : true,
-          }).eq("id", v.id);
+          }).eq("id", v.id).eq("producto_id", productoActual.user_id);
+          if (activeSucursalId) variantUpdate = variantUpdate.eq("sucursal_id", activeSucursalId);
+          await requireAffectedRows(variantUpdate, "id", "No se pudo actualizar la variante.");
         } else {
           // Insertar
-          await supabase.from("producto_variantes").insert({
+          const { error: variantInsertError } = await supabase.from("producto_variantes").insert({
             producto_id: productoActual.user_id,
             sucursal_id: activeSucursalId || null,
             color: v.color,
@@ -382,33 +367,15 @@ export default function EditarCatalogo() {
             imagen_url: v.imagen_url,
             activo: v.activo !== undefined ? v.activo : true,
           });
+          if (variantInsertError) throw variantInsertError;
         }
       }
 
-      // 3. Sincronizar imágenes
-      // Obtener imágenes actuales en BD
-      let imagenesBDQuery = supabase
-        .from("producto_imagenes")
-        .select("id, producto_id, imagen_url").eq("producto_id", productoActual.user_id);
-      if (activeSucursalId) imagenesBDQuery = imagenesBDQuery.eq("sucursal_id", activeSucursalId);
-      const { data: imagenesBD } = await fetchCompleteQuery(imagenesBDQuery);
-      // Eliminar imágenes quitadas
-      for (const imgBD of imagenesBD || []) {
-        if (!nuevasImagenes.some(img => img.id === imgBD.id || img.imagen_url === imgBD.imagen_url)) {
-          await supabase.from("producto_imagenes").delete().eq("id", imgBD.id);
-        }
-      }
-      // Insertar nuevas imágenes
-      for (const img of nuevasImagenes) {
-        const alreadyExists = (imagenesBD || []).some((imgBD) => imgBD.imagen_url === img.imagen_url);
-        if (!img.id && !alreadyExists) {
-          await supabase.from("producto_imagenes").insert({
-            producto_id: productoActual.user_id,
-            sucursal_id: activeSucursalId || null,
-            imagen_url: img.imagen_url,
-          });
-        }
-      }
+      await syncProductImageReferences(supabase, {
+        productId: productoActual.user_id,
+        branchId: activeSucursalId,
+        urls: nuevasImagenes.map(getImageUrl),
+      });
 
       showToast("Producto actualizado con éxito!");
 

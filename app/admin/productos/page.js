@@ -1,6 +1,7 @@
 "use client";
 import { availableProductsFirst } from "@/lib/productAvailability.js";
-import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
+import { createProductImageUploader } from "@/lib/productImageStorage.js";
+import { requireAffectedRows, syncProductImageReferences } from "@/lib/productImageReferences.js";
 import StorageImage from "@/components/StorageImage";
 import { fetchCompleteQuery } from "@/lib/supabasePagination";
 
@@ -8,7 +9,6 @@ import dynamic from 'next/dynamic';
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from "../../../lib/SupabaseClient";
 import { useRouter } from "next/navigation";
-import { v4 as uuidv4 } from 'uuid';
 import { PrecioConPromocion } from '../../../lib/promociones';
 import { usePromociones } from '../../../lib/usePromociones';
 import { getOptimizedImageUrl, buildImageSrcSet } from '../../../lib/imageOptimization';
@@ -109,40 +109,7 @@ function DeleteConfirmationModal({ isOpen, onClose, onConfirm, productName }) {
 // --------------------------------------------------------------------------
 // Lógica para subir la imagen a Supabase Storage (¡REVISAR RLS DE STORAGE!)
 // --------------------------------------------------------------------------
-const uploadProductImages = async (files) => {
-    if (!files || files.length === 0) return [];
-    const BUCKET_NAME = 'product_images';
-    const urls = [];
-    // Usar un prefijo genérico para todos los usuarios (no requiere login para ver)
-    const userId = 'public';
-    for (const file of files) {
-        const { file: preparedFile } = await optimizeImageForUpload(file, {
-            maxDimension: 2600,
-            targetMaxBytes: 2.8 * 1024 * 1024,
-            hardMaxBytes: 4.2 * 1024 * 1024,
-            preferredQuality: 0.98,
-            minQuality: 0.9,
-        });
-
-        const fileExtension = preparedFile.name.split('.').pop();
-        const fileName = `${uuidv4()}.${fileExtension}`;
-        const filePath = `${userId}/${fileName}`;
-        const { error: uploadError } = await supabase.storage
-            .from(BUCKET_NAME)
-            .upload(filePath, preparedFile, {
-                cacheControl: '3600',
-                upsert: false,
-            });
-        if (uploadError) {
-            throw new Error(`Error al subir imagen a storage (Bucket: ${BUCKET_NAME}): ${uploadError.message}`);
-        }
-        const { data: publicUrlData } = supabase.storage
-            .from(BUCKET_NAME)
-            .getPublicUrl(filePath);
-        urls.push(resolveStorageImageUrl(publicUrlData.publicUrl));
-    }
-    return urls;
-};
+const uploadProductImages = createProductImageUploader({ supabase, optimizeImageForUpload });
 
 function isMissingColumnError(error, columnName) {
     return String(error?.message || '').toLowerCase().includes(String(columnName).toLowerCase());
@@ -178,6 +145,9 @@ export default function AdminProductosPage() {
     const [productos, setProductos] = useState([]);
     const [imagenesProductos, setImagenesProductos] = useState({});
     const newImageInputRef = useRef(null);
+    const createdProductRef = useRef(null);
+    const createBusyRef = useRef(false);
+    const [creationNeedsReview, setCreationNeedsReview] = useState(false);
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [productToDelete, setProductToDelete] = useState(null);
     const [categories, setCategories] = useState([]);
@@ -420,7 +390,7 @@ export default function AdminProductosPage() {
     const openEditModal = (producto) => {
         setEditingProduct(producto);
         setEditImageFiles([]);
-        setEditImageList(imagenesProductos[producto.user_id] || []);
+        setEditImageList(Array.from(new Set([producto.imagen_url, ...(imagenesProductos[producto.user_id] || [])].filter(url => url && url !== "/sin-imagen.png"))));
         setMessage('');
     };
 
@@ -571,7 +541,13 @@ export default function AdminProductosPage() {
     // Función para Añadir Producto
     const handleAñadirProducto = async (e) => {
         e.preventDefault();
+        if (createBusyRef.current) return;
+        if (createdProductRef.current != null) {
+            setMessage(`El articulo ${createdProductRef.current} ya fue creado. Revisa sus datos en Editar Articulos antes de intentar otra alta.`);
+            return;
+        }
         setMessage('');
+        createBusyRef.current = true;
         setLoading(true);
         let imagenUrls = [];
         try {
@@ -602,6 +578,10 @@ export default function AdminProductosPage() {
                 throw new Error(insertError.message);
             }
 
+            const productoId = productoInsertado?.[0]?.user_id;
+            if (productoId == null) throw new Error('No se pudo confirmar el identificador del articulo creado. Revisa el catalogo antes de reintentar.');
+            createdProductRef.current = productoId;
+
             // Insertar las imágenes en la tabla producto_imagenes
             if (productoInsertado && productoInsertado.length > 0 && imagenUrls.length > 0) {
                 const productoId = productoInsertado[0].user_id;
@@ -617,7 +597,7 @@ export default function AdminProductosPage() {
                 }
             }
 
-            setMessage('✅ Producto creado con éxito!');
+
             const initialStock = Math.max(0, parseDecimalInput(newProduct.stock, 0));
             if (initialStock > 0 && productoInsertado?.[0]?.user_id) {
                 const user = (await supabase.auth.getUser())?.data?.user;
@@ -628,6 +608,8 @@ export default function AdminProductosPage() {
                 });
                 if (increaseError) throw increaseError;
             }
+            createdProductRef.current = null;
+            setMessage('✅ Producto creado con éxito!');
             setNewProduct({ nombre: '', descripcion: '', precio: '', stock: '', category_id: '', codigo_barra: '', vista_producto: 'articulos' });
             setImageFiles([]);
             if (newImageInputRef.current) {
@@ -635,11 +617,25 @@ export default function AdminProductosPage() {
             }
             fetchProductos();
         } catch (e) {
+            setCreationNeedsReview(createdProductRef.current != null);
             console.error("Error crítico al crear producto:", e);
-            setMessage(`❌ Error crítico al crear: ${e.message}`);
+            setMessage(createdProductRef.current != null
+                ? `El articulo ${createdProductRef.current} ya fue creado, pero quedo incompleto: ${e.message}. Revisalo en Editar Articulos; no repitas el alta.`
+                : `Error al crear: ${e.message}`);
         } finally {
+            createBusyRef.current = false;
             setLoading(false);
         }
+    };
+
+    const startAnotherProduct = () => {
+        if (createBusyRef.current) return;
+        createdProductRef.current = null;
+        setCreationNeedsReview(false);
+        setMessage('');
+        setNewProduct({ nombre: '', descripcion: '', precio: '', stock: '', category_id: '', codigo_barra: '', vista_producto: 'articulos' });
+        setImageFiles([]);
+        if (newImageInputRef.current) newImageInputRef.current.value = '';
     };
 
     const handleDelete = async (producto) => {
@@ -668,11 +664,7 @@ export default function AdminProductosPage() {
                 // Usamos user_id como ID único del producto para filtrar
                 .eq('user_id', productToDelete.user_id);
             if (activeSucursalId) deleteQuery = deleteQuery.eq('sucursal_id', activeSucursalId);
-            const { error } = await deleteQuery;
-
-            if (error) {
-                throw new Error(error.message);
-            }
+            await requireAffectedRows(deleteQuery, "user_id", "No se pudo archivar el producto. Verifica los permisos y la sucursal.");
 
             setMessage(`✅ Producto "${productToDelete.nombre}" eliminado con éxito.`);
             fetchProductos();
@@ -708,47 +700,17 @@ export default function AdminProductosPage() {
                     precio_compra: parseFloat(editingProduct.precio_compra) || 0,
                     category_id: categoryIdValue,
                     vista_producto: normalizeProductView(editingProduct.vista_producto),
+                    imagen_url: [...editImageList, ...nuevasUrls][0] || null,
                 })
                 .eq('user_id', editingProduct.user_id);
             if (activeSucursalId) updateQuery = updateQuery.eq('sucursal_id', activeSucursalId);
-            const { error: updateError } = await updateQuery;
-            if (updateError) {
-                throw new Error(updateError.message);
-            }
+            await requireAffectedRows(updateQuery, "user_id", "No se pudo actualizar el producto. Verifica los permisos y la sucursal.");
 
-            // 3. Eliminar imágenes quitadas (de la tabla producto_imagenes)
-            const originales = imagenesProductos[editingProduct.user_id] || [];
-            // Comparamos las URLs originales con las que quedaron en editImageList
-            const urlsAEliminar = originales.filter(url => !editImageList.includes(url));
-
-            if (urlsAEliminar.length > 0) {
-                // Eliminamos las referencias de la tabla producto_imagenes
-                let deleteImgQuery = supabase.from('producto_imagenes')
-                    .delete()
-                    .in('imagen_url', urlsAEliminar)
-                    .eq('producto_id', editingProduct.user_id);
-                if (activeSucursalId) deleteImgQuery = deleteImgQuery.eq('sucursal_id', activeSucursalId);
-                const { error: deleteImgError } = await deleteImgQuery;
-
-                if(deleteImgError) console.error("Error al eliminar referencias de imágenes:", deleteImgError.message);
-
-                // NOTA: ELIMINAR del Storage es más complejo y no está implementado aquí,
-                // ya que requeriría el path exacto del archivo, no solo la URL pública.
-                // Esto es una mejora pendiente.
-            }
-
-            // 4. Insertar nuevas imágenes
-            if (nuevasUrls.length > 0) {
-                const imagesToInsert = nuevasUrls.map(url => ({
-                    producto_id: editingProduct.user_id,
-                    imagen_url: url,
-                    sucursal_id: activeSucursalId || null
-                }));
-                const { error: imgInsertError } = await insertWithOptionalSucursal('producto_imagenes', imagesToInsert);
-                if (imgInsertError) {
-                    throw new Error(imgInsertError.message);
-                }
-            }
+            await syncProductImageReferences(supabase, {
+                productId: editingProduct.user_id,
+                branchId: activeSucursalId,
+                urls: [...editImageList, ...nuevasUrls],
+            });
 
             setMessage(`✅ Producto "${editingProduct.nombre}" actualizado con éxito.`);
             closeEditModal();
@@ -775,10 +737,17 @@ export default function AdminProductosPage() {
 
             {/* Sección de Mensajes (Éxito/Error) */}
             {message && (
-                <div className={`p-4 mb-6 rounded-lg font-medium shadow-md ${message.startsWith('❌')
+                <div className={`p-4 mb-6 rounded-lg font-medium shadow-md ${/error|incompleto|ya fue creado/i.test(message)
                     ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
                     {message}
                 </div>
+            )}
+
+            {creationNeedsReview && (
+                <button type="button" onClick={startAnotherProduct} disabled={loading}
+                    className="mb-4 rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white disabled:opacity-50">
+                    Iniciar otro articulo
+                </button>
             )}
 
             {/* 1. Formulario de Añadir Producto */}

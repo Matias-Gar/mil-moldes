@@ -1,5 +1,6 @@
 "use client";
 import { fetchCompleteQuery } from "../../../../lib/supabasePagination.js";
+import { requireAffectedRows } from "@/lib/productImageReferences.js";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../../../lib/SupabaseClient";
@@ -126,8 +127,7 @@ export default function ArchivarProductosPage() {
 
       if (activeSucursalId) updateQuery = updateQuery.eq("sucursal_id", activeSucursalId);
 
-      const { error } = await updateQuery;
-      if (error) throw error;
+      await requireAffectedRows(updateQuery, "user_id", "No se pudo cambiar el estado del producto. Verifica los permisos y la sucursal.");
 
       await registrarHistorialProducto({
         producto_id: Number(producto.user_id),

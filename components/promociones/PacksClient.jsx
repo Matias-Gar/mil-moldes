@@ -1,11 +1,14 @@
 "use client";
-import { resolveStorageImageUrl } from "@/lib/storageUrls.js";
+import { createProductImageUploader } from "@/lib/productImageStorage.js";
+import { optimizeImageForUpload } from "@/lib/imageUploadOptimization";
 
 
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/SupabaseClient";
 import Image from "@/components/StorageImage";
 import { useSucursalActiva } from "@/components/admin/SucursalContext";
+
+const uploadPackImages = createProductImageUploader({ supabase, optimizeImageForUpload, folder: 'packs' });
 
 function normalizeSearch(value) {
   return String(value || "")
@@ -419,20 +422,6 @@ export default function PacksClient({ initialPacks = [] }) {
                     const nombre = form.nombre.value.trim();
                     const descripcion = form.descripcion.value.trim();
                     const fecha_fin = form.fecha_fin.value || null;
-                    let imagen_url = editPack.imagen_url;
-                    // Subida de imagen si hay archivo nuevo
-                    const file = form.imagen.files[0];
-                    if (file) {
-                      const filePath = `packs/${editPack.id}_${Date.now()}_${file.name}`;
-                      const { error: uploadError } = await supabase.storage.from('product_images').upload(filePath, file, { upsert: true, contentType: file.type || 'image/jpeg' });
-                      if (!uploadError) {
-                        const { data } = supabase.storage.from('product_images').getPublicUrl(filePath);
-                        imagen_url = resolveStorageImageUrl(data.publicUrl);
-                      } else {
-                        alert('Error subiendo imagen: ' + uploadError.message);
-                        return;
-                      }
-                    }
                     // Productos seleccionados y cantidades
                     const productosSeleccionados = productosAll.filter(p => form[`prod_${p.user_id}`]?.checked)
                       .map(p => ({
@@ -442,6 +431,17 @@ export default function PacksClient({ initialPacks = [] }) {
                     if (productosSeleccionados.length < 2) {
                       alert('Selecciona al menos 2 productos para el pack');
                       return;
+                    }
+                    let imagen_url = editPack.imagen_url;
+                    // Subida de imagen si hay archivo nuevo
+                    const file = form.imagen.files[0];
+                    if (file) {
+                      try {
+                        [imagen_url] = await uploadPackImages([file]);
+                      } catch (uploadError) {
+                        alert('Error subiendo imagen: ' + uploadError.message);
+                        return;
+                      }
                     }
                     // Actualizar pack en la base de datos
                     let packQuery = supabase.from('packs').update({ nombre, descripcion, imagen_url, fecha_fin }).eq('id', editPack.id);
