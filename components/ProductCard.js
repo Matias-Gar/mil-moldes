@@ -172,6 +172,8 @@ export default function ProductCard({
           <label className="font-semibold text-gray-700">Precio</label>
           <Input
             type="number"
+            min="0"
+            step="0.01"
             value={editData.precio ?? prod.precio}
             onChange={(e) =>
               setEditDataField(productId, "precio", e.target.value)

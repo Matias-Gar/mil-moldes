@@ -244,6 +244,22 @@ export default function EditarCatalogo() {
       const cambios = editando[prodId] || {};
       const productoActual = productos.find((p) => getProductKey(p) === prodId);
       if (!productoActual) throw new Error("El producto ya no esta disponible. Recarga el catalogo.");
+      if (Object.keys(cambios).length === 1 && Object.hasOwn(cambios, "precio")) {
+        const precio = parseDecimalInput(cambios.precio);
+        if (precio === null || precio < 0) throw new Error("Ingresa un precio válido mayor o igual a cero.");
+        let query = supabase.from("productos").update({ precio });
+        query = productoActual.user_id != null
+          ? query.eq("user_id", productoActual.user_id)
+          : query.eq("id", prodId);
+        if (activeSucursalId) query = query.eq("sucursal_id", activeSucursalId);
+        await requireAffectedRows(query, productoActual.user_id != null ? "user_id" : "id", "No se pudo actualizar el precio. Verifica los permisos y la sucursal.");
+        setProductos((prev) => prev.map((p) => getProductKey(p) === prodId ? { ...p, precio } : p));
+        setEditando((prev) => ({ ...prev, [prodId]: undefined }));
+        showToast("Precio actualizado con éxito.");
+        setLoading(false);
+        closeConfirm();
+        return;
+      }
       const precioNormalizado = parseDecimalInput(
         cambios.precio,
         parseDecimalInput(productoActual?.precio, 0)
